@@ -58,6 +58,7 @@ class ControlPanel(QMainWindow):
         self._load_settings()
         self._load_pen_config()
         self._setup_ui()
+        self._update_ui_from_settings()  # Update UI after setup
         self._update_frame_count()
         
         # Auto-refresh timer
@@ -72,8 +73,8 @@ class ControlPanel(QMainWindow):
         self.height = 1080
         self.fps = 60
         
-        # Drawing settings
-        self.speed = 5.0
+        # Drawing settings (fixed duration mode)
+        self.target_duration = 10.0
         self.thickness = 1.0
         self.use_gpu = True
         
@@ -102,46 +103,78 @@ class ControlPanel(QMainWindow):
         """Load all settings from file."""
         settings = self.settings_manager.load_settings()
         
-        self.width = int(settings.get("width", "800"))
-        self.height = int(settings.get("height", "1000"))
-        self.fps = int(settings.get("fps", "60"))
-        self.speed = float(settings.get("speed", 5.0))
+        self.width = int(settings.get("width", "1920"))
+        self.height = int(settings.get("height", "1080"))
+        self.fps = 60  # Always 60
+        self.target_duration = float(settings.get("target_duration", "10.0"))
         self.thickness = float(settings.get("thickness", 1.0))
         self.use_gpu = settings.get("use_gpu", True)
         self.show_pen = settings.get("show_pen", True)
-        self.frame_thickness = float(settings.get("frame_thickness", 6.0))
+        self.frame_thickness = float(settings.get("frame_thickness", 3.0))
         self.frame_speed = float(settings.get("frame_speed", 1.0))
-        self.frame_margin = float(settings.get("frame_margin", 20.0))
+        self.frame_margin = float(settings.get("frame_margin", 100.0))
         self.use_custom_pen = settings.get("use_custom_pen", False)
         self.custom_pen_path = settings.get("custom_pen_path", "")
+        
+        print(f"DEBUG: Loaded custom_pen_path from settings: '{self.custom_pen_path}'")
+        print(f"DEBUG: use_custom_pen: {self.use_custom_pen}")
+        
+        # Check if custom pen exists, if not try default location
         if self.custom_pen_path and not Path(self.custom_pen_path).exists():
-            self.custom_pen_path = None
-        self.pen_scale = float(settings.get("pen_scale", 1.0))
+            print(f"DEBUG: Saved path doesn't exist, clearing: {self.custom_pen_path}")
+            self.custom_pen_path = ""
+        
+        # Try loading from default assets location if no path set
+        if not self.custom_pen_path:
+            default_pen = SIMULATION_DIR / "assets" / "custom_pen.png"
+            print(f"DEBUG: Checking default pen location: {default_pen}")
+            if default_pen.exists():
+                self.custom_pen_path = str(default_pen)
+                self.use_custom_pen = True
+                print(f"DEBUG: Found default pen, set path to: {self.custom_pen_path}")
+            else:
+                print("DEBUG: Default pen not found")
+        
+        self.pen_scale = float(settings.get("pen_scale", 0.3))
         self.pen_rotation = settings.get("pen_rotation", True)
         self.auto_record = settings.get("auto_record", False)
-        self.video_fps = int(settings.get("video_fps", "60"))
+        self.video_fps = 60  # Always 60
         self.video_quality = settings.get("video_quality", "high")
     
     def _save_settings(self):
         """Save all settings to file."""
+        # Read current values from UI
+        try:
+            width = int(self.width_input.text())
+            height = int(self.height_input.text())
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Input", "Width and Height must be valid integers.")
+            return
+        
+        # Get target duration (fixed duration mode)
+        try:
+            target_duration = float(self.duration_input.text())
+        except ValueError:
+            target_duration = 10.0
+        
         settings = {
-            "width": str(self.width),
-            "height": str(self.height),
-            "fps": str(self.fps),
-            "speed": self.speed,
-            "thickness": self.thickness,
-            "use_gpu": self.use_gpu,
-            "show_pen": self.show_pen,
-            "frame_thickness": self.frame_thickness,
-            "frame_speed": self.frame_speed,
-            "frame_margin": self.frame_margin,
-            "use_custom_pen": self.use_custom_pen,
+            "width": str(width),
+            "height": str(height),
+            "fps": "60",  # Always 60
+            "target_duration": str(target_duration),
+            "thickness": str(self.thickness_slider.value() / 10.0),
+            "use_gpu": self.gpu_toggle.isChecked(),
+            "show_pen": self.show_pen_toggle.isChecked(),
+            "frame_thickness": str(self.frame_thickness_slider.value()),
+            "frame_speed": str(self.frame_speed_slider.value() / 10.0),
+            "frame_margin": str(self.frame_margin_slider.value()),
+            "use_custom_pen": self.custom_pen_toggle.isChecked(),
             "custom_pen_path": self.custom_pen_path if self.custom_pen_path else "",
-            "pen_scale": self.pen_scale,
-            "pen_rotation": self.pen_rotation,
-            "auto_record": self.auto_record,
-            "video_fps": str(self.video_fps),
-            "video_quality": self.video_quality
+            "pen_scale": str(self.pen_scale_slider.value() / 10.0),
+            "pen_rotation": self.pen_rotation_toggle.isChecked(),
+            "auto_record": self.auto_record_toggle.isChecked(),
+            "video_fps": "60",  # Always 60
+            "video_quality": self.video_quality_combo.currentText()
         }
         
         if self.settings_manager.save_settings(settings):
@@ -175,21 +208,20 @@ class ControlPanel(QMainWindow):
                     self.pen_tip_y = config.get("pen_tip_y", 0)
             except Exception:
                 pass
-        
-        # Load custom pen path from settings if not already set
-        if not self.custom_pen_path:
-            custom_pen = SIMULATION_DIR / "assets" / "custom_pen.png"
-            if custom_pen.exists():
-                self.custom_pen_path = str(custom_pen)
-                
-                # Load and display preview after UI is set up
-                # This will be called after _setup_ui completes
-                QTimer.singleShot(100, self._load_pen_preview)
+        else:
+            # Default pen tip values
+            self.pen_tip_x = 0
+            self.pen_tip_y = 0
     
     def _load_pen_preview(self):
         """Load and display the pen preview image."""
+        if not hasattr(self, 'pen_preview_label'):
+            print("Warning: pen_preview_label not yet created")
+            return
+            
         if self.custom_pen_path and Path(self.custom_pen_path).exists():
             try:
+                print(f"Loading pen preview from: {self.custom_pen_path}")
                 pixmap = QPixmap(self.custom_pen_path)
                 if not pixmap.isNull():
                     scaled_pixmap = pixmap.scaled(
@@ -198,8 +230,13 @@ class ControlPanel(QMainWindow):
                         Qt.TransformationMode.SmoothTransformation
                     )
                     self.pen_preview_label.setPixmap(scaled_pixmap)
+                    print("Pen preview loaded successfully")
+                else:
+                    print("Failed to load pen preview: pixmap is null")
             except Exception as e:
                 print(f"Failed to load pen preview: {e}")
+        else:
+            print(f"No valid pen path: {self.custom_pen_path}")
     
     def _setup_ui(self):
         """Setup the main UI."""
@@ -1177,7 +1214,7 @@ class ControlPanel(QMainWindow):
         self.width_input.setText(str(self.width))
         self.height_input.setText(str(self.height))
         # FPS is locked at 60, no UI control
-        self.speed_slider.setValue(int(self.speed * 10))
+        self.duration_input.setText(str(self.target_duration))
         self.thickness_slider.setValue(int(self.thickness * 10))
         self.gpu_toggle.setChecked(self.use_gpu)
         self.show_pen_toggle.setChecked(self.show_pen)
@@ -1190,6 +1227,19 @@ class ControlPanel(QMainWindow):
         self.auto_record_toggle.setChecked(self.auto_record)
         # Note: video_fps is always 60, no UI control needed
         self.video_quality_combo.setCurrentText(self.video_quality)
+        
+        # Update pen status label and preview
+        print(f"DEBUG _update_ui_from_settings: use_custom_pen={self.use_custom_pen}, custom_pen_path='{self.custom_pen_path}'")
+        if self.use_custom_pen and self.custom_pen_path:
+            self.pen_status_label.setText("Custom pen loaded")
+            # Load pen preview immediately (no timer needed, UI is already created)
+            print("DEBUG: Calling _load_pen_preview()")
+            self._load_pen_preview()
+        else:
+            self.pen_status_label.setText("No custom pen")
+            # Clear preview
+            self.pen_preview_label.clear()
+            print("DEBUG: No custom pen, cleared preview")
     
     def _launch_simulation(self):
         """Launch the simulation."""
