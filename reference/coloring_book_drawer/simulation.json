@@ -1,0 +1,17 @@
+{
+    "id": "coloring_book_drawer",
+    "name": "Coloring Book Drawer",
+    "description": "Upload complex line art images (like coloring book pages) and watch them being drawn with smooth animations. GPU-accelerated for performance with variable line thickness preservation.",
+    "icon": "fa-palette",
+    "color": "#8b5cf6",
+    "version": "1.0.0",
+    "author": "AI Assistant",
+    "license": "MIT",
+    "homepage": "https://github.com/dananjayahbi/simulations-system",
+    "min_loops_version": "1.0.0",
+    "tags": ["drawing", "coloring book", "line art", "animation", "satisfying", "GPU", "art", "sketch"],
+    "requires_pygame": true,
+    "entry_point": "main.py",
+    "control_panel": "control_panel.py",
+    "dependencies": ["opencv-python", "opencv-contrib-python", "numpy", "pillow", "scipy"]
+}

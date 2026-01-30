@@ -1,0 +1,1351 @@
+#!/usr/bin/env python3
+"""
+Coloring Book Drawer - Control Panel Main Window (PySide6)
+===========================================================
+Main control panel window implementation for the coloring book drawer simulation.
+"""
+
+import sys
+import os
+import json
+import subprocess
+import threading
+import shutil
+import time
+from pathlib import Path
+
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QPushButton, QSlider, QLineEdit, QCheckBox, QComboBox, QGroupBox,
+    QFileDialog, QMessageBox, QScrollArea, QFrame, QSpinBox, QDialog, QInputDialog,
+    QRadioButton
+)
+from PySide6.QtCore import Qt, Signal, QTimer, QThread, QUrl, QSize, QPoint
+from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QIcon, QFont, QPainter, QPen, QColor, QMouseEvent
+
+# Import modularized components
+from settings_manager import SettingsManager
+from custom_widgets import ToggleSwitch, ImageUploadWidget, PenTipConfigDialog, load_icon
+from video_thread import VideoGenerationThread
+
+# Get paths
+SIMULATION_DIR = Path(__file__).resolve().parent
+BASE_DIR = SIMULATION_DIR.parent
+FRAMES_FOLDER = SIMULATION_DIR / "frames"
+UPLOADS_FOLDER = SIMULATION_DIR / "uploads"
+ICONS_FOLDER = SIMULATION_DIR / "assets" / "icons"
+
+
+class ControlPanel(QMainWindow):
+    """Main control panel window."""
+    
+    def __init__(self):
+        super().__init__()
+        
+        # Ensure folders exist
+        UPLOADS_FOLDER.mkdir(parents=True, exist_ok=True)
+        FRAMES_FOLDER.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize settings manager
+        self.settings_manager = SettingsManager(SIMULATION_DIR)
+        
+        # Process tracking
+        self.simulation_process = None
+        self.video_thread = None
+        
+        # Setup UI
+        self._init_variables()
+        self._load_settings()
+        self._load_pen_config()
+        self._setup_ui()
+        self._update_frame_count()
+        
+        # Auto-refresh timer
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(self._update_frame_count)
+        self.refresh_timer.start(2000)  # 2 seconds
+    
+    def _init_variables(self):
+        """Initialize all settings variables."""
+        # Window settings
+        self.width = 800
+        self.height = 1000
+        self.fps = 60
+        
+        # Drawing settings
+        self.speed = 5.0
+        self.thickness = 1.0
+        self.use_gpu = True
+        
+        # Visual settings
+        self.show_pen = True
+        
+        # Frame border settings
+        self.frame_thickness = 6.0
+        self.frame_speed = 1.0
+        self.frame_margin = 20.0
+        
+        # Custom pen settings
+        self.use_custom_pen = False
+        self.custom_pen_path = None
+        self.pen_tip_x = 0
+        self.pen_tip_y = 0
+        self.pen_scale = 1.0
+        self.pen_rotation = True
+        
+        # Recording settings
+        self.auto_record = False
+        self.video_fps = 60
+        self.video_quality = "high"
+    
+    def _load_settings(self):
+        """Load all settings from file."""
+        settings = self.settings_manager.load_settings()
+        
+        self.width = int(settings.get("width", "800"))
+        self.height = int(settings.get("height", "1000"))
+        self.fps = int(settings.get("fps", "60"))
+        self.speed = float(settings.get("speed", 5.0))
+        self.thickness = float(settings.get("thickness", 1.0))
+        self.use_gpu = settings.get("use_gpu", True)
+        self.show_pen = settings.get("show_pen", True)
+        self.frame_thickness = float(settings.get("frame_thickness", 6.0))
+        self.frame_speed = float(settings.get("frame_speed", 1.0))
+        self.frame_margin = float(settings.get("frame_margin", 20.0))
+        self.use_custom_pen = settings.get("use_custom_pen", False)
+        self.custom_pen_path = settings.get("custom_pen_path", "")
+        if self.custom_pen_path and not Path(self.custom_pen_path).exists():
+            self.custom_pen_path = None
+        self.pen_scale = float(settings.get("pen_scale", 1.0))
+        self.pen_rotation = settings.get("pen_rotation", True)
+        self.auto_record = settings.get("auto_record", False)
+        self.video_fps = int(settings.get("video_fps", "60"))
+        self.video_quality = settings.get("video_quality", "high")
+    
+    def _on_mode_changed(self):
+        """Handle mode toggle between speed and duration control."""
+        if self.speed_mode_radio.isChecked():
+            self.speed_control_widget.setVisible(True)
+            self.duration_control_widget.setVisible(False)
+        else:
+            self.speed_control_widget.setVisible(False)
+            self.duration_control_widget.setVisible(True)
+    
+    def _save_settings(self):
+        """Save all settings to file."""
+        settings = {
+            "width": str(self.width),
+            "height": str(self.height),
+            "fps": str(self.fps),
+            "speed": self.speed,
+            "thickness": self.thickness,
+            "use_gpu": self.use_gpu,
+            "show_pen": self.show_pen,
+            "frame_thickness": self.frame_thickness,
+            "frame_speed": self.frame_speed,
+            "frame_margin": self.frame_margin,
+            "use_custom_pen": self.use_custom_pen,
+            "custom_pen_path": self.custom_pen_path if self.custom_pen_path else "",
+            "pen_scale": self.pen_scale,
+            "pen_rotation": self.pen_rotation,
+            "auto_record": self.auto_record,
+            "video_fps": str(self.video_fps),
+            "video_quality": self.video_quality
+        }
+        
+        if self.settings_manager.save_settings(settings):
+            self._update_status("Settings saved successfully!")
+            QMessageBox.information(self, "Success", "Settings saved successfully!")
+    
+    def _reset_to_defaults(self):
+        """Reset all settings to defaults."""
+        reply = QMessageBox.question(
+            self,
+            "Reset Settings",
+            "Are you sure you want to reset all settings to defaults?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.settings_manager.reset_to_defaults()
+            self._load_settings()
+            self._update_ui_from_settings()
+            self._update_status("Settings reset to defaults")
+            QMessageBox.information(self, "Reset Complete", "All settings have been reset to defaults.")
+    
+    def _load_pen_config(self):
+        """Load custom pen configuration."""
+        pen_config_file = SIMULATION_DIR / "assets" / "pen_settings.json"
+        if pen_config_file.exists():
+            try:
+                with open(pen_config_file, 'r') as f:
+                    config = json.load(f)
+                    self.pen_tip_x = config.get("pen_tip_x", 0)
+                    self.pen_tip_y = config.get("pen_tip_y", 0)
+            except Exception:
+                pass
+        
+        # Load custom pen path from settings if not already set
+        if not self.custom_pen_path:
+            custom_pen = SIMULATION_DIR / "assets" / "custom_pen.png"
+            if custom_pen.exists():
+                self.custom_pen_path = str(custom_pen)
+                
+                # Load and display preview after UI is set up
+                # This will be called after _setup_ui completes
+                QTimer.singleShot(100, self._load_pen_preview)
+    
+    def _load_pen_preview(self):
+        """Load and display the pen preview image."""
+        if self.custom_pen_path and Path(self.custom_pen_path).exists():
+            try:
+                pixmap = QPixmap(self.custom_pen_path)
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(
+                        100, 100,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    self.pen_preview_label.setPixmap(scaled_pixmap)
+            except Exception as e:
+                print(f"Failed to load pen preview: {e}")
+    
+    def _setup_ui(self):
+        """Setup the main UI."""
+        self.setWindowTitle("Coloring Book Drawer - Control Panel")
+        self.setMinimumSize(1100, 750)
+        self.resize(1100, 800)
+        
+        # Set dark theme
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #111827;
+            }
+            QWidget {
+                background-color: #111827;
+                color: #e5e7eb;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 11px;
+            }
+            QGroupBox {
+                background-color: #1f2937;
+                border: 1px solid #374151;
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 20px;
+                font-weight: bold;
+                color: #f3f4f6;
+                font-size: 12px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 5px 10px;
+                color: #f3f4f6;
+            }
+            QLabel {
+                color: #d1d5db;
+                background-color: transparent;
+            }
+            QLineEdit, QSpinBox {
+                background-color: #374151;
+                border: 1px solid #4b5563;
+                border-radius: 4px;
+                padding: 6px;
+                color: #f3f4f6;
+            }
+            QLineEdit:focus, QSpinBox:focus {
+                border: 1px solid #8b5cf6;
+            }
+            QSlider::groove:horizontal {
+                height: 6px;
+                background: #374151;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #8b5cf6;
+                width: 16px;
+                height: 16px;
+                margin: -5px 0;
+                border-radius: 8px;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #7c3aed;
+            }
+            QComboBox {
+                background-color: #374151;
+                border: 1px solid #4b5563;
+                border-radius: 4px;
+                padding: 6px;
+                color: #f3f4f6;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 6px solid #9ca3af;
+                width: 0;
+                height: 0;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #374151;
+                border: 1px solid #4b5563;
+                selection-background-color: #8b5cf6;
+                color: #f3f4f6;
+            }
+            QPushButton {
+                background-color: #374151;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #4b5563;
+            }
+            QPushButton:pressed {
+                background-color: #1f2937;
+            }
+            QScrollArea {
+                border: none;
+            }
+            QScrollBar:vertical {
+                background-color: #1f2937;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #4b5563;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #6b7280;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+        
+        # Central widget with scroll area
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
+        
+        # Header
+        self._create_header(main_layout)
+        
+        # Scroll area for content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        scroll_content = QWidget()
+        content_layout = QVBoxLayout(scroll_content)
+        content_layout.setSpacing(15)
+        
+        # Main content - 3 columns
+        columns_layout = QHBoxLayout()
+        columns_layout.setSpacing(15)
+        
+        # Left column
+        left_column = QVBoxLayout()
+        left_column.setSpacing(15)
+        self._create_image_upload_section(left_column)
+        self._create_window_settings(left_column)
+        left_column.addStretch()
+        columns_layout.addLayout(left_column, 1)
+        
+        # Middle column
+        middle_column = QVBoxLayout()
+        middle_column.setSpacing(15)
+        self._create_drawing_settings(middle_column)
+        self._create_visual_settings(middle_column)
+        middle_column.addStretch()
+        columns_layout.addLayout(middle_column, 1)
+        
+        # Right column
+        right_column = QVBoxLayout()
+        right_column.setSpacing(15)
+        self._create_custom_pen_settings(right_column)
+        self._create_frame_border_settings(right_column)
+        self._create_recording_settings(right_column)
+        right_column.addStretch()
+        columns_layout.addLayout(right_column, 1)
+        
+        content_layout.addLayout(columns_layout)
+        
+        # Frame management
+        self._create_frame_management(content_layout)
+        
+        scroll.setWidget(scroll_content)
+        main_layout.addWidget(scroll, 1)
+        
+        # Launch button
+        self._create_launch_button(main_layout)
+        
+        # Status bar
+        self._create_status_bar(main_layout)
+    
+    def _create_header(self, layout):
+        """Create header section."""
+        header_layout = QHBoxLayout()
+        
+        # Title section
+        title_layout = QVBoxLayout()
+        title_label = QLabel("🎨 Coloring Book Drawer")
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 24px;
+                font-weight: bold;
+                color: #8b5cf6;
+            }
+        """)
+        title_layout.addWidget(title_label)
+        
+        subtitle_label = QLabel("GPU-Accelerated Line Art Animation")
+        subtitle_label.setStyleSheet("""
+            QLabel {
+                font-size: 11px;
+                color: #9ca3af;
+            }
+        """)
+        title_layout.addWidget(subtitle_label)
+        
+        header_layout.addLayout(title_layout)
+        header_layout.addStretch()
+        
+        # Save/Reset buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        
+        save_btn = QPushButton("Save Settings")
+        save_btn.setIcon(load_icon("save"))
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #22c55e;
+                color: white;
+                font-weight: bold;
+                padding: 10px 20px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #16a34a;
+            }
+        """)
+        save_btn.clicked.connect(self._save_settings)
+        btn_layout.addWidget(save_btn)
+        
+        reset_btn = QPushButton("Reset to Defaults")
+        reset_btn.setIcon(load_icon("reset"))
+        reset_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f59e0b;
+                color: white;
+                padding: 10px 20px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #d97706;
+            }
+        """)
+        reset_btn.clicked.connect(self._reset_to_defaults)
+        btn_layout.addWidget(reset_btn)
+        
+        header_layout.addLayout(btn_layout)
+        
+        layout.addLayout(header_layout)
+    
+    def _create_image_upload_section(self, layout):
+        """Create image upload section."""
+        group = QGroupBox("Line Art Image (Black lines on White background)")
+        group_layout = QVBoxLayout(group)
+        group_layout.setSpacing(10)
+        
+        info_label = QLabel("Upload a line art image (like coloring book pages)")
+        info_label.setStyleSheet("QLabel { color: #9ca3af; font-size: 10px; }")
+        group_layout.addWidget(info_label)
+        
+        self.image_upload_widget = ImageUploadWidget(UPLOADS_FOLDER)
+        self.image_upload_widget.imageUploaded.connect(
+            lambda filename: self._update_status(f"Loaded: {filename}")
+        )
+        self.image_upload_widget.imageCleared.connect(
+            lambda: self._update_status("Image cleared")
+        )
+        group_layout.addWidget(self.image_upload_widget)
+        
+        layout.addWidget(group)
+    
+    def _create_window_settings(self, layout):
+        """Create window settings section."""
+        group = QGroupBox("Window Settings")
+        group_layout = QVBoxLayout(group)
+        group_layout.setSpacing(10)
+        
+        # Width and Height
+        size_layout = QGridLayout()
+        size_layout.setSpacing(10)
+        
+        size_layout.addWidget(QLabel("Width:"), 0, 0)
+        self.width_input = QLineEdit(str(self.width))
+        self.width_input.setMaximumWidth(100)
+        size_layout.addWidget(self.width_input, 0, 1)
+        
+        size_layout.addWidget(QLabel("Height:"), 0, 2)
+        self.height_input = QLineEdit(str(self.height))
+        self.height_input.setMaximumWidth(100)
+        size_layout.addWidget(self.height_input, 0, 3)
+        
+        # FPS is now locked at 60 - show as fixed label instead of input
+        size_layout.addWidget(QLabel("FPS:"), 1, 0)
+        fps_label = QLabel("<b>60 FPS</b> (locked)")
+        fps_label.setStyleSheet("QLabel { color: #8b5cf6; }")
+        fps_label.setMaximumWidth(100)
+        size_layout.addWidget(fps_label, 1, 1)
+        
+        group_layout.addLayout(size_layout)
+        
+        # Presets
+        presets_layout = QHBoxLayout()
+        presets_layout.setSpacing(8)
+        
+        preset_label = QLabel("Presets:")
+        presets_layout.addWidget(preset_label)
+        
+        presets = [
+            ("4:5 (800x1000)", 800, 1000),
+            ("1:1 (800x800)", 800, 800),
+            ("9:16 (540x960)", 540, 960)
+        ]
+        
+        for name, w, h in presets:
+            btn = QPushButton(name)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #4b5563;
+                    padding: 5px 10px;
+                    font-size: 10px;
+                }
+                QPushButton:hover {
+                    background-color: #6b7280;
+                }
+            """)
+            btn.clicked.connect(lambda checked, w=w, h=h: self._set_resolution(w, h))
+            presets_layout.addWidget(btn)
+        
+        presets_layout.addStretch()
+        group_layout.addLayout(presets_layout)
+        
+        layout.addWidget(group)
+    
+    def _create_drawing_settings(self, layout):
+        """Create drawing settings section."""
+        group = QGroupBox("Drawing Settings")
+        group_layout = QVBoxLayout(group)
+        group_layout.setSpacing(12)
+        
+        # Mode Selector: Animation Speed vs Fixed Duration
+        mode_layout = QHBoxLayout()
+        mode_label = QLabel("Control Mode:")
+        mode_layout.addWidget(mode_label)
+        
+        self.speed_mode_radio = QRadioButton("Animation Speed")
+        self.speed_mode_radio.setChecked(True)
+        self.speed_mode_radio.toggled.connect(self._on_mode_changed)
+        mode_layout.addWidget(self.speed_mode_radio)
+        
+        self.duration_mode_radio = QRadioButton("Fixed Duration")
+        self.duration_mode_radio.toggled.connect(self._on_mode_changed)
+        mode_layout.addWidget(self.duration_mode_radio)
+        
+        mode_layout.addStretch()
+        group_layout.addLayout(mode_layout)
+        
+        # Animation Speed Control (shown when speed_mode is active)
+        self.speed_control_widget = QWidget()
+        speed_layout = QVBoxLayout(self.speed_control_widget)
+        speed_layout.setContentsMargins(0, 0, 0, 0)
+        speed_layout.setSpacing(5)
+        
+        speed_header = QHBoxLayout()
+        speed_label = QLabel("Animation Speed:")
+        speed_label.setToolTip("Controls how fast the drawing animation plays (independent of FPS)")
+        self.speed_value_label = QLabel(f"{self.speed:.1f}")
+        self.speed_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
+        speed_header.addWidget(speed_label)
+        speed_header.addStretch()
+        speed_header.addWidget(self.speed_value_label)
+        speed_layout.addLayout(speed_header)
+        
+        self.speed_slider = QSlider(Qt.Orientation.Horizontal)
+        self.speed_slider.setMinimum(10)
+        self.speed_slider.setMaximum(150)
+        self.speed_slider.setValue(int(self.speed * 10))
+        self.speed_slider.valueChanged.connect(
+            lambda v: self.speed_value_label.setText(f"{v/10:.1f}")
+        )
+        speed_layout.addWidget(self.speed_slider)
+        group_layout.addWidget(self.speed_control_widget)
+        
+        # Fixed Duration Control (shown when duration_mode is active)
+        self.duration_control_widget = QWidget()
+        duration_layout = QGridLayout(self.duration_control_widget)
+        duration_layout.setContentsMargins(0, 0, 0, 0)
+        duration_layout.setSpacing(10)
+        
+        duration_label = QLabel("Target Duration:")
+        duration_label.setToolTip("Set the exact duration for the full animation to complete")
+        duration_layout.addWidget(duration_label, 0, 0)
+        
+        self.duration_input = QLineEdit("30")
+        self.duration_input.setMaximumWidth(100)
+        self.duration_input.setPlaceholderText("seconds")
+        duration_layout.addWidget(self.duration_input, 0, 1)
+        
+        duration_unit_label = QLabel("seconds")
+        duration_layout.addWidget(duration_unit_label, 0, 2)
+        
+        duration_info = QLabel("ℹ️ Animation speed will auto-adjust to match this duration")
+        duration_info.setStyleSheet("QLabel { color: #9ca3af; font-size: 10px; }")
+        duration_info.setWordWrap(True)
+        duration_layout.addWidget(duration_info, 1, 0, 1, 3)
+        
+        self.duration_control_widget.setVisible(False)  # Hidden by default
+        group_layout.addWidget(self.duration_control_widget)
+        
+        # Thickness Scale
+        thickness_layout = QVBoxLayout()
+        thickness_layout.setSpacing(5)
+        
+        thickness_header = QHBoxLayout()
+        thickness_label = QLabel("Thickness Scale:")
+        self.thickness_value_label = QLabel(f"{self.thickness:.1f}")
+        self.thickness_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
+        thickness_header.addWidget(thickness_label)
+        thickness_header.addStretch()
+        thickness_header.addWidget(self.thickness_value_label)
+        thickness_layout.addLayout(thickness_header)
+        
+        self.thickness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.thickness_slider.setMinimum(5)
+        self.thickness_slider.setMaximum(30)
+        self.thickness_slider.setValue(int(self.thickness * 10))
+        self.thickness_slider.valueChanged.connect(
+            lambda v: self.thickness_value_label.setText(f"{v/10:.1f}")
+        )
+        thickness_layout.addWidget(self.thickness_slider)
+        
+        group_layout.addLayout(thickness_layout)
+        
+        # GPU Acceleration
+        gpu_layout = QHBoxLayout()
+        gpu_label = QLabel("GPU Acceleration (if available)")
+        self.gpu_toggle = ToggleSwitch()
+        self.gpu_toggle.setChecked(self.use_gpu)
+        gpu_layout.addWidget(gpu_label)
+        gpu_layout.addStretch()
+        gpu_layout.addWidget(self.gpu_toggle)
+        group_layout.addLayout(gpu_layout)
+        
+        layout.addWidget(group)
+    
+    def _create_visual_settings(self, layout):
+        """Create visual settings section."""
+        group = QGroupBox("Visual Settings")
+        group_layout = QVBoxLayout(group)
+        
+        # Show Pen Animation
+        pen_layout = QHBoxLayout()
+        pen_label = QLabel("Show Pen Animation")
+        self.show_pen_toggle = ToggleSwitch()
+        self.show_pen_toggle.setChecked(self.show_pen)
+        pen_layout.addWidget(pen_label)
+        pen_layout.addStretch()
+        pen_layout.addWidget(self.show_pen_toggle)
+        group_layout.addLayout(pen_layout)
+        
+        layout.addWidget(group)
+    
+    def _create_custom_pen_settings(self, layout):
+        """Create custom pen settings section."""
+        group = QGroupBox("Custom Pen Settings")
+        group_layout = QVBoxLayout(group)
+        group_layout.setSpacing(12)
+        
+        # Use Custom Pen
+        custom_pen_layout = QHBoxLayout()
+        custom_pen_label = QLabel("Use Custom Pen Image")
+        self.custom_pen_toggle = ToggleSwitch()
+        self.custom_pen_toggle.setChecked(self.use_custom_pen)
+        custom_pen_layout.addWidget(custom_pen_label)
+        custom_pen_layout.addStretch()
+        custom_pen_layout.addWidget(self.custom_pen_toggle)
+        group_layout.addLayout(custom_pen_layout)
+        
+        # Upload Pen
+        upload_layout = QHBoxLayout()
+        upload_btn = QPushButton("Upload Pen PNG")
+        upload_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #22c55e;
+                color: white;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #16a34a;
+            }
+        """)
+        upload_btn.clicked.connect(self._upload_pen_image)
+        upload_layout.addWidget(upload_btn)
+        
+        self.pen_status_label = QLabel("Custom pen loaded" if self.custom_pen_path else "No custom pen")
+        self.pen_status_label.setStyleSheet("QLabel { color: #9ca3af; font-size: 10px; }")
+        upload_layout.addWidget(self.pen_status_label)
+        
+        # Add pen preview
+        self.pen_preview_label = QLabel()
+        self.pen_preview_label.setFixedSize(100, 100)
+        self.pen_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pen_preview_label.setStyleSheet("""
+            QLabel {
+                background-color: #374151;
+                border: 1px solid #4b5563;
+                border-radius: 4px;
+            }
+        """)
+        upload_layout.addWidget(self.pen_preview_label)
+        upload_layout.addStretch()
+        
+        group_layout.addLayout(upload_layout)
+        
+        # Configure Tip
+        configure_btn = QPushButton("Configure Pen Tip")
+        configure_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #8b5cf6;
+                color: white;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #7c3aed;
+            }
+        """)
+        configure_btn.clicked.connect(self._configure_pen_tip)
+        group_layout.addWidget(configure_btn)
+        
+        # Pen Scale
+        scale_layout = QVBoxLayout()
+        scale_layout.setSpacing(5)
+        
+        scale_header = QHBoxLayout()
+        scale_label = QLabel("Pen Scale:")
+        self.pen_scale_value_label = QLabel(f"{self.pen_scale:.1f}x")
+        self.pen_scale_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
+        scale_header.addWidget(scale_label)
+        scale_header.addStretch()
+        scale_header.addWidget(self.pen_scale_value_label)
+        scale_layout.addLayout(scale_header)
+        
+        self.pen_scale_slider = QSlider(Qt.Orientation.Horizontal)
+        self.pen_scale_slider.setMinimum(3)
+        self.pen_scale_slider.setMaximum(30)
+        self.pen_scale_slider.setValue(int(self.pen_scale * 10))
+        self.pen_scale_slider.valueChanged.connect(
+            lambda v: self.pen_scale_value_label.setText(f"{v/10:.1f}x")
+        )
+        scale_layout.addWidget(self.pen_scale_slider)
+        
+        group_layout.addLayout(scale_layout)
+        
+        # Pen Rotation
+        rotation_layout = QHBoxLayout()
+        rotation_label = QLabel("Enable Pen Rotation (follows drawing direction)")
+        rotation_label.setWordWrap(True)
+        self.pen_rotation_toggle = ToggleSwitch()
+        self.pen_rotation_toggle.setChecked(self.pen_rotation)
+        rotation_layout.addWidget(rotation_label, 1)
+        rotation_layout.addWidget(self.pen_rotation_toggle)
+        group_layout.addLayout(rotation_layout)
+        
+        layout.addWidget(group)
+    
+    def _create_frame_border_settings(self, layout):
+        """Create frame border settings section."""
+        group = QGroupBox("Frame Border Settings")
+        group_layout = QVBoxLayout(group)
+        group_layout.setSpacing(12)
+        
+        # Border Thickness
+        thickness_layout = QVBoxLayout()
+        thickness_layout.setSpacing(5)
+        
+        thickness_header = QHBoxLayout()
+        thickness_label = QLabel("Border Thickness:")
+        self.frame_thickness_value_label = QLabel(f"{int(self.frame_thickness)}")
+        self.frame_thickness_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
+        thickness_header.addWidget(thickness_label)
+        thickness_header.addStretch()
+        thickness_header.addWidget(self.frame_thickness_value_label)
+        thickness_layout.addLayout(thickness_header)
+        
+        self.frame_thickness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.frame_thickness_slider.setMinimum(2)
+        self.frame_thickness_slider.setMaximum(15)
+        self.frame_thickness_slider.setValue(int(self.frame_thickness))
+        self.frame_thickness_slider.valueChanged.connect(
+            lambda v: self.frame_thickness_value_label.setText(str(v))
+        )
+        thickness_layout.addWidget(self.frame_thickness_slider)
+        
+        group_layout.addLayout(thickness_layout)
+        
+        # Border Draw Speed
+        speed_layout = QVBoxLayout()
+        speed_layout.setSpacing(5)
+        
+        speed_header = QHBoxLayout()
+        speed_label = QLabel("Border Draw Speed:")
+        self.frame_speed_value_label = QLabel(f"{self.frame_speed:.1f}x")
+        self.frame_speed_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
+        speed_header.addWidget(speed_label)
+        speed_header.addStretch()
+        speed_header.addWidget(self.frame_speed_value_label)
+        speed_layout.addLayout(speed_header)
+        
+        self.frame_speed_slider = QSlider(Qt.Orientation.Horizontal)
+        self.frame_speed_slider.setMinimum(5)
+        self.frame_speed_slider.setMaximum(50)
+        self.frame_speed_slider.setValue(int(self.frame_speed * 10))
+        self.frame_speed_slider.valueChanged.connect(
+            lambda v: self.frame_speed_value_label.setText(f"{v/10:.1f}x")
+        )
+        speed_layout.addWidget(self.frame_speed_slider)
+        
+        group_layout.addLayout(speed_layout)
+        
+        # Border Margin
+        margin_layout = QVBoxLayout()
+        margin_layout.setSpacing(5)
+        
+        margin_header = QHBoxLayout()
+        margin_label = QLabel("Border Margin:")
+        self.frame_margin_value_label = QLabel(f"{int(self.frame_margin)}px")
+        self.frame_margin_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
+        margin_header.addWidget(margin_label)
+        margin_header.addStretch()
+        margin_header.addWidget(self.frame_margin_value_label)
+        margin_layout.addLayout(margin_header)
+        
+        self.frame_margin_slider = QSlider(Qt.Orientation.Horizontal)
+        self.frame_margin_slider.setMinimum(10)
+        self.frame_margin_slider.setMaximum(100)
+        self.frame_margin_slider.setValue(int(self.frame_margin))
+        self.frame_margin_slider.valueChanged.connect(
+            lambda v: self.frame_margin_value_label.setText(f"{v}px")
+        )
+        margin_layout.addWidget(self.frame_margin_slider)
+        
+        group_layout.addLayout(margin_layout)
+        
+        layout.addWidget(group)
+    
+    def _create_recording_settings(self, layout):
+        """Create recording settings section."""
+        group = QGroupBox("Recording Settings")
+        group_layout = QVBoxLayout(group)
+        group_layout.setSpacing(12)
+        
+        # Auto-start Recording
+        auto_layout = QHBoxLayout()
+        auto_label = QLabel("Auto-start Recording")
+        self.auto_record_toggle = ToggleSwitch()
+        self.auto_record_toggle.setChecked(self.auto_record)
+        auto_layout.addWidget(auto_label)
+        auto_layout.addStretch()
+        auto_layout.addWidget(self.auto_record_toggle)
+        group_layout.addLayout(auto_layout)
+        
+        # Video Quality setting (FPS is always 60)
+        video_settings_layout = QGridLayout()
+        video_settings_layout.setSpacing(10)
+        
+        video_settings_layout.addWidget(QLabel("Output FPS:"), 0, 0)
+        fps_info = QLabel("<b>60 FPS</b> (always smooth)")
+        fps_info.setStyleSheet("QLabel { color: #8b5cf6; }")
+        video_settings_layout.addWidget(fps_info, 0, 1)
+        
+        video_settings_layout.addWidget(QLabel("Quality:"), 0, 2)
+        self.video_quality_combo = QComboBox()
+        self.video_quality_combo.addItems(["low", "medium", "high"])
+        self.video_quality_combo.setCurrentText(self.video_quality)
+        video_settings_layout.addWidget(self.video_quality_combo, 0, 3)
+        
+        group_layout.addLayout(video_settings_layout)
+        
+        layout.addWidget(group)
+    
+    def _create_frame_management(self, layout):
+        """Create frame management section."""
+        group = QGroupBox("Frame Management")
+        group_layout = QHBoxLayout(group)
+        group_layout.setSpacing(15)
+        
+        # Frame count
+        count_layout = QVBoxLayout()
+        count_label = QLabel("Recorded Frames:")
+        count_label.setStyleSheet("QLabel { color: #9ca3af; font-size: 10px; }")
+        count_layout.addWidget(count_label)
+        
+        self.frame_count_label = QLabel("0")
+        self.frame_count_label.setStyleSheet("""
+            QLabel {
+                color: #8b5cf6;
+                font-size: 20px;
+                font-weight: bold;
+            }
+        """)
+        count_layout.addWidget(self.frame_count_label)
+        count_layout.addStretch()
+        
+        group_layout.addLayout(count_layout)
+        
+        # Buttons
+        btn_layout = QVBoxLayout()
+        btn_layout.setSpacing(8)
+        
+        btn_row1 = QHBoxLayout()
+        btn_row1.setSpacing(8)
+        
+        clear_btn = QPushButton("Clear Frames")
+        clear_btn.setIcon(load_icon("clear"))
+        clear_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ef4444;
+                color: white;
+            }
+            QPushButton:hover {
+                background-color: #dc2626;
+            }
+        """)
+        clear_btn.clicked.connect(self._clear_frames)
+        btn_row1.addWidget(clear_btn)
+        
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setIcon(load_icon("refresh"))
+        refresh_btn.clicked.connect(self._update_frame_count)
+        btn_row1.addWidget(refresh_btn)
+        
+        btn_layout.addLayout(btn_row1)
+        
+        btn_row2 = QHBoxLayout()
+        btn_row2.setSpacing(8)
+        
+        generate_btn = QPushButton("Generate Video")
+        generate_btn.setIcon(load_icon("video"))
+        generate_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #22c55e;
+                color: white;
+            }
+            QPushButton:hover {
+                background-color: #16a34a;
+            }
+        """)
+        generate_btn.clicked.connect(self._generate_video)
+        btn_row2.addWidget(generate_btn)
+        
+        open_folder_btn = QPushButton("Open Frames Folder")
+        open_folder_btn.setIcon(load_icon("folder"))
+        open_folder_btn.clicked.connect(self._open_frames_folder)
+        btn_row2.addWidget(open_folder_btn)
+        
+        btn_layout.addLayout(btn_row2)
+        
+        group_layout.addLayout(btn_layout, 1)
+        
+        layout.addWidget(group)
+    
+    def _create_launch_button(self, layout):
+        """Create launch button."""
+        launch_btn = QPushButton("LAUNCH SIMULATION")
+        launch_btn.setIcon(load_icon("launch"))
+        launch_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #8b5cf6;
+                color: white;
+                font-size: 16px;
+                font-weight: bold;
+                padding: 15px;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #7c3aed;
+            }
+            QPushButton:pressed {
+                background-color: #6d28d9;
+            }
+        """)
+        launch_btn.clicked.connect(self._launch_simulation)
+        layout.addWidget(launch_btn)
+    
+    def _create_status_bar(self, layout):
+        """Create status bar."""
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet("""
+            QLabel {
+                background-color: #1f2937;
+                color: #9ca3af;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-size: 10px;
+            }
+        """)
+        layout.addWidget(self.status_label)
+    
+    def _update_status(self, message):
+        """Update status bar message."""
+        self.status_label.setText(message)
+    
+    def _set_resolution(self, width, height):
+        """Set resolution preset."""
+        self.width_input.setText(str(width))
+        self.height_input.setText(str(height))
+        self._update_status(f"Resolution set to {width}x{height}")
+    
+    def _upload_pen_image(self):
+        """Handle pen image upload."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Custom Pen Image (PNG)",
+            "",
+            "PNG files (*.png);;All files (*.*)"
+        )
+        
+        if file_path:
+            try:
+                assets_folder = SIMULATION_DIR / "assets"
+                assets_folder.mkdir(parents=True, exist_ok=True)
+                
+                dest_path = assets_folder / "custom_pen.png"
+                shutil.copy(file_path, dest_path)
+                
+                self.custom_pen_path = str(dest_path)
+                self.pen_status_label.setText("Custom pen loaded")
+                
+                # Update preview
+                pixmap = QPixmap(str(dest_path))
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(
+                        100, 100,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    self.pen_preview_label.setPixmap(scaled_pixmap)
+                
+                self._update_status("Custom pen uploaded successfully")
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to upload pen image: {e}")
+    
+    def _configure_pen_tip(self):
+        """Configure pen tip position."""
+        if not self.custom_pen_path or not Path(self.custom_pen_path).exists():
+            QMessageBox.warning(
+                self,
+                "No Custom Pen",
+                "Please upload a custom pen image first."
+            )
+            return
+        
+        # Open pen tip configuration dialog
+        dialog = PenTipConfigDialog(self.custom_pen_path, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Get the tip position from the dialog
+            self.pen_tip_x, self.pen_tip_y = dialog.get_tip_position()
+            
+            # Save to pen_settings.json
+            pen_config_file = SIMULATION_DIR / "assets" / "pen_settings.json"
+            pen_config_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            try:
+                with open(pen_config_file, 'w') as f:
+                    json.dump({
+                        "pen_tip_x": self.pen_tip_x,
+                        "pen_tip_y": self.pen_tip_y
+                    }, f, indent=2)
+                
+                self._update_status(f"Pen tip configured: ({self.pen_tip_x}, {self.pen_tip_y})")
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Pen tip position saved:\nX: {self.pen_tip_x}\nY: {self.pen_tip_y}"
+                )
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save pen tip configuration: {e}")
+    
+    def _update_frame_count(self):
+        """Update frame count label."""
+        try:
+            frames = list(FRAMES_FOLDER.glob("frame_*.png"))
+            count = len(frames)
+            self.frame_count_label.setText(str(count))
+        except Exception:
+            self.frame_count_label.setText("0")
+    
+    def _clear_frames(self):
+        """Clear all recorded frames."""
+        reply = QMessageBox.question(
+            self,
+            "Clear Frames",
+            "Are you sure you want to delete all recorded frames?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                for frame in FRAMES_FOLDER.glob("frame_*.png"):
+                    frame.unlink()
+                self._update_frame_count()
+                self._update_status("All frames cleared")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to clear frames: {e}")
+    
+    def _open_frames_folder(self):
+        """Open frames folder in file explorer."""
+        try:
+            if sys.platform == 'win32':
+                os.startfile(str(FRAMES_FOLDER))
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', str(FRAMES_FOLDER)])
+            else:
+                subprocess.run(['xdg-open', str(FRAMES_FOLDER)])
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open folder: {e}")
+    
+    def _generate_video(self):
+        """Generate video from frames."""
+        frames = list(FRAMES_FOLDER.glob("frame_*.png"))
+        if not frames:
+            QMessageBox.warning(
+                self,
+                "No Frames",
+                "No frames found. Please run the simulation first."
+            )
+            return
+        
+        # FPS is always 60 now
+        sim_fps = 60
+        
+        frame_count = len(frames)
+        expected_duration = frame_count / sim_fps
+        
+        # Ask user for video generation confirmation
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("Generate Video")
+        msg.setText(
+            f"<b>Video Generation Settings:</b><br><br>"
+            f"• Captured frames: {frame_count}<br>"
+            f"• Simulation FPS: <b>60 (locked)</b><br>"
+            f"• Video duration: {expected_duration:.1f} seconds<br>"
+            f"• Output FPS: <b>60 FPS</b> (smooth playback)<br><br>"
+            f"<i>Note: Video will be 60 FPS while preserving the original<br>"
+            f"{expected_duration:.1f}-second duration by duplicating frames.</i>"
+        )
+        
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        
+        if msg.exec() != QMessageBox.StandardButton.Ok:
+            return  # Cancelled
+        
+        # Get quality CRF value
+        quality_map = {"low": 28, "medium": 23, "high": 18}
+        quality_crf = quality_map.get(self.video_quality_combo.currentText(), 23)
+        
+        # Generate output filename
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        output_path = SIMULATION_DIR / f"output_{timestamp}_60fps.mp4"
+        
+        # Start video generation thread
+        self.video_thread = VideoGenerationThread(
+            FRAMES_FOLDER,
+            output_path,
+            sim_fps,  # Input framerate (how frames were captured)
+            quality_crf,
+            output_fps=60  # Output framerate (always 60 for smoothness)
+        )
+        self.video_thread.finished.connect(self._on_video_finished)
+        self.video_thread.error.connect(self._on_video_error)
+        self.video_thread.start()
+        
+        self._update_status("Generating 60 FPS video...")
+    
+    def _on_video_finished(self, output_path):
+        """Handle video generation completion."""
+        self._update_status(f"Video saved: {Path(output_path).name}")
+        QMessageBox.information(
+            self,
+            "Video Generated",
+            f"Video saved successfully:\n{output_path}"
+        )
+    
+    def _on_video_error(self, error_msg):
+        """Handle video generation error."""
+        self._update_status("Video generation failed")
+        QMessageBox.critical(self, "Video Generation Error", error_msg)
+    
+    def _update_ui_from_settings(self):
+        """Update UI widgets from current settings."""
+        self.width_input.setText(str(self.width))
+        self.height_input.setText(str(self.height))
+        # FPS is locked at 60, no UI control
+        self.speed_slider.setValue(int(self.speed * 10))
+        self.thickness_slider.setValue(int(self.thickness * 10))
+        self.gpu_toggle.setChecked(self.use_gpu)
+        self.show_pen_toggle.setChecked(self.show_pen)
+        self.frame_thickness_slider.setValue(int(self.frame_thickness))
+        self.frame_speed_slider.setValue(int(self.frame_speed * 10))
+        self.frame_margin_slider.setValue(int(self.frame_margin))
+        self.custom_pen_toggle.setChecked(self.use_custom_pen)
+        self.pen_scale_slider.setValue(int(self.pen_scale * 10))
+        self.pen_rotation_toggle.setChecked(self.pen_rotation)
+        self.auto_record_toggle.setChecked(self.auto_record)
+        # Note: video_fps is always 60, no UI control needed
+        self.video_quality_combo.setCurrentText(self.video_quality)
+    
+    def _launch_simulation(self):
+        """Launch the simulation."""
+        # Validate inputs
+        image_path = self.image_upload_widget.get_image_path()
+        if not image_path:
+            QMessageBox.warning(
+                self,
+                "No Image",
+                "Please upload a line art image first."
+            )
+            return
+        
+        try:
+            width = int(self.width_input.text())
+            height = int(self.height_input.text())
+            # FPS is locked at 60
+            fps = 60
+        except ValueError:
+            QMessageBox.critical(
+                self,
+                "Invalid Input",
+                "Width and Height must be valid integers."
+            )
+            return
+        
+        # Get current values from UI
+        # Check which mode is active
+        if self.duration_mode_radio.isChecked():
+            # Duration mode: pass target duration, simulation will auto-calculate speed
+            try:
+                target_duration = float(self.duration_input.text())
+                if target_duration <= 0:
+                    raise ValueError("Duration must be positive")
+            except ValueError:
+                QMessageBox.critical(
+                    self,
+                    "Invalid Duration",
+                    "Please enter a valid positive number for duration (in seconds)."
+                )
+                return
+            # We'll pass target-duration as a special flag
+            speed = None  # Will be calculated by simulation
+        else:
+            # Speed mode: use slider value
+            speed = self.speed_slider.value() / 10.0
+            target_duration = None
+        
+        thickness = self.thickness_slider.value() / 10.0
+        frame_thickness = int(self.frame_thickness_slider.value())
+        frame_speed = int(self.frame_speed_slider.value() / 10.0)
+        frame_margin = int(self.frame_margin_slider.value())
+        pen_scale = self.pen_scale_slider.value() / 10.0
+        
+        # Build command (no --fps argument, it's always 60)
+        cmd = [
+            sys.executable,
+            str(SIMULATION_DIR / "main.py"),
+            "--width", str(width),
+            "--height", str(height),
+            # --fps removed, always 60
+            "--image", image_path,
+            "--thickness", str(thickness),
+            "--frame-thickness", str(frame_thickness),
+            "--frame-speed", str(frame_speed),
+            "--frame-margin", str(frame_margin)
+        ]
+        
+        # Add speed or duration parameter
+        if target_duration is not None:
+            cmd.extend(["--target-duration", str(target_duration)])
+        else:
+            cmd.extend(["--speed", str(speed)])
+        
+        # Add conditional flags
+        if not self.show_pen_toggle.isChecked():
+            cmd.append("--no-pen")
+        
+        if not self.auto_record_toggle.isChecked():
+            cmd.append("--no-record")
+        
+        if not self.gpu_toggle.isChecked():
+            cmd.append("--no-gpu")
+        
+        # Custom pen settings
+        if self.custom_pen_toggle.isChecked() and self.custom_pen_path and Path(self.custom_pen_path).exists():
+            cmd.extend([
+                "--custom-pen", self.custom_pen_path,
+                "--pen-tip-x", str(self.pen_tip_x),
+                "--pen-tip-y", str(self.pen_tip_y),
+                "--pen-scale", str(pen_scale)
+            ])
+            if self.pen_rotation_toggle.isChecked():
+                cmd.append("--pen-rotation")
+        
+        # Launch in thread
+        def run_simulation():
+            try:
+                self.simulation_process = subprocess.Popen(
+                    cmd,
+                    cwd=str(SIMULATION_DIR)
+                )
+                self.simulation_process.wait()
+                self._update_status("Simulation completed")
+                self._update_frame_count()
+            except Exception as e:
+                self._update_status(f"Simulation error: {str(e)}")
+        
+        thread = threading.Thread(target=run_simulation, daemon=True)
+        thread.start()
+        
+        self._update_status("Simulation launched...")
+
+
+def main():
+    """Main entry point."""
+    app = QApplication(sys.argv)
+    
+    # Set application style
+    app.setStyle('Fusion')
+    
+    window = ControlPanel()
+    window.show()
+    
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
