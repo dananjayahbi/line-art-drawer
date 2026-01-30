@@ -68,8 +68,8 @@ class ControlPanel(QMainWindow):
     def _init_variables(self):
         """Initialize all settings variables."""
         # Window settings
-        self.width = 800
-        self.height = 1000
+        self.width = 1920
+        self.height = 1080
         self.fps = 60
         
         # Drawing settings
@@ -121,15 +121,6 @@ class ControlPanel(QMainWindow):
         self.auto_record = settings.get("auto_record", False)
         self.video_fps = int(settings.get("video_fps", "60"))
         self.video_quality = settings.get("video_quality", "high")
-    
-    def _on_mode_changed(self):
-        """Handle mode toggle between speed and duration control."""
-        if self.speed_mode_radio.isChecked():
-            self.speed_control_widget.setVisible(True)
-            self.duration_control_widget.setVisible(False)
-        else:
-            self.speed_control_widget.setVisible(False)
-            self.duration_control_widget.setVisible(True)
     
     def _save_settings(self):
         """Save all settings to file."""
@@ -213,71 +204,73 @@ class ControlPanel(QMainWindow):
     def _setup_ui(self):
         """Setup the main UI."""
         self.setWindowTitle("Coloring Book Drawer - Control Panel")
-        self.setMinimumSize(1100, 750)
-        self.resize(1100, 800)
+        self.setMinimumSize(1366, 768)
+        self.setMaximumSize(1920, 1080)
+        # Open as maximized window
+        self.showMaximized()
         
-        # Set dark theme
+        # Set warm terracotta theme
         self.setStyleSheet("""
             QMainWindow {
-                background-color: #111827;
+                background-color: #f5ebe0;
             }
             QWidget {
-                background-color: #111827;
-                color: #e5e7eb;
+                background-color: #f5ebe0;
+                color: #4a3428;
                 font-family: 'Segoe UI', Arial, sans-serif;
                 font-size: 11px;
             }
             QGroupBox {
-                background-color: #1f2937;
-                border: 1px solid #374151;
+                background-color: #faf7f2;
+                border: 1px solid #d4c4b0;
                 border-radius: 8px;
                 margin-top: 12px;
                 padding-top: 20px;
                 font-weight: bold;
-                color: #f3f4f6;
+                color: #5c4033;
                 font-size: 12px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
                 padding: 5px 10px;
-                color: #f3f4f6;
+                color: #5c4033;
             }
             QLabel {
-                color: #d1d5db;
+                color: #6b5444;
                 background-color: transparent;
             }
             QLineEdit, QSpinBox {
-                background-color: #374151;
-                border: 1px solid #4b5563;
+                background-color: #ffffff;
+                border: 1px solid #d4c4b0;
                 border-radius: 4px;
                 padding: 6px;
-                color: #f3f4f6;
+                color: #4a3428;
             }
             QLineEdit:focus, QSpinBox:focus {
-                border: 1px solid #8b5cf6;
+                border: 1px solid #c2785a;
             }
             QSlider::groove:horizontal {
                 height: 6px;
-                background: #374151;
+                background: #d4c4b0;
                 border-radius: 3px;
             }
             QSlider::handle:horizontal {
-                background: #8b5cf6;
+                background: #c2785a;
                 width: 16px;
                 height: 16px;
                 margin: -5px 0;
                 border-radius: 8px;
             }
             QSlider::handle:horizontal:hover {
-                background: #7c3aed;
+                background: #a85d44;
             }
             QComboBox {
-                background-color: #374151;
-                border: 1px solid #4b5563;
+                background-color: #ffffff;
+                border: 1px solid #d4c4b0;
                 border-radius: 4px;
                 padding: 6px;
-                color: #f3f4f6;
+                color: #4a3428;
             }
             QComboBox::drop-down {
                 border: none;
@@ -286,45 +279,47 @@ class ControlPanel(QMainWindow):
                 image: none;
                 border-left: 4px solid transparent;
                 border-right: 4px solid transparent;
-                border-top: 6px solid #9ca3af;
+                border-top: 6px solid #6b5444;
                 width: 0;
                 height: 0;
             }
             QComboBox QAbstractItemView {
-                background-color: #374151;
-                border: 1px solid #4b5563;
-                selection-background-color: #8b5cf6;
-                color: #f3f4f6;
+                background-color: #ffffff;
+                border: 1px solid #d4c4b0;
+                selection-background-color: #c2785a;
+                color: #4a3428;
             }
             QPushButton {
-                background-color: #374151;
-                color: white;
+                background-color: #d4a88a;
+                color: #4a3428;
                 border: none;
                 border-radius: 6px;
                 padding: 8px 16px;
                 font-size: 11px;
+                font-weight: 500;
             }
             QPushButton:hover {
-                background-color: #4b5563;
+                background-color: #c2785a;
+                color: white;
             }
             QPushButton:pressed {
-                background-color: #1f2937;
+                background-color: #a85d44;
             }
             QScrollArea {
                 border: none;
             }
             QScrollBar:vertical {
-                background-color: #1f2937;
+                background-color: #e8ddd0;
                 width: 12px;
                 border-radius: 6px;
             }
             QScrollBar::handle:vertical {
-                background-color: #4b5563;
+                background-color: #c2785a;
                 border-radius: 6px;
                 min-height: 20px;
             }
             QScrollBar::handle:vertical:hover {
-                background-color: #6b7280;
+                background-color: #a85d44;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0px;
@@ -405,7 +400,7 @@ class ControlPanel(QMainWindow):
             QLabel {
                 font-size: 24px;
                 font-weight: bold;
-                color: #8b5cf6;
+                color: #c2785a;
             }
         """)
         title_layout.addWidget(title_label)
@@ -414,7 +409,7 @@ class ControlPanel(QMainWindow):
         subtitle_label.setStyleSheet("""
             QLabel {
                 font-size: 11px;
-                color: #9ca3af;
+                color: #8b7355;
             }
         """)
         title_layout.addWidget(subtitle_label)
@@ -426,34 +421,35 @@ class ControlPanel(QMainWindow):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
         
-        save_btn = QPushButton("Save Settings")
-        save_btn.setIcon(load_icon("save"))
+        save_btn = QPushButton("💾 Save Settings")
         save_btn.setStyleSheet("""
             QPushButton {
-                background-color: #22c55e;
+                background-color: #c2785a;
                 color: white;
                 font-weight: bold;
                 padding: 10px 20px;
                 font-size: 12px;
+                border-radius: 6px;
             }
             QPushButton:hover {
-                background-color: #16a34a;
+                background-color: #a85d44;
             }
         """)
         save_btn.clicked.connect(self._save_settings)
         btn_layout.addWidget(save_btn)
         
-        reset_btn = QPushButton("Reset to Defaults")
-        reset_btn.setIcon(load_icon("reset"))
+        reset_btn = QPushButton("🔄 Reset to Defaults")
         reset_btn.setStyleSheet("""
             QPushButton {
-                background-color: #f59e0b;
-                color: white;
+                background-color: #d4a88a;
+                color: #4a3428;
                 padding: 10px 20px;
                 font-size: 12px;
+                border-radius: 6px;
+                font-weight: 500;
             }
             QPushButton:hover {
-                background-color: #d97706;
+                background-color: #e8c5a8;
             }
         """)
         reset_btn.clicked.connect(self._reset_to_defaults)
@@ -470,7 +466,7 @@ class ControlPanel(QMainWindow):
         group_layout.setSpacing(10)
         
         info_label = QLabel("Upload a line art image (like coloring book pages)")
-        info_label.setStyleSheet("QLabel { color: #9ca3af; font-size: 10px; }")
+        info_label.setStyleSheet("QLabel { color: #8b7355; font-size: 10px; }")
         group_layout.addWidget(info_label)
         
         self.image_upload_widget = ImageUploadWidget(UPLOADS_FOLDER)
@@ -507,7 +503,7 @@ class ControlPanel(QMainWindow):
         # FPS is now locked at 60 - show as fixed label instead of input
         size_layout.addWidget(QLabel("FPS:"), 1, 0)
         fps_label = QLabel("<b>60 FPS</b> (locked)")
-        fps_label.setStyleSheet("QLabel { color: #8b5cf6; }")
+        fps_label.setStyleSheet("QLabel { color: #c2785a; }")
         fps_label.setMaximumWidth(100)
         size_layout.addWidget(fps_label, 1, 1)
         
@@ -552,60 +548,28 @@ class ControlPanel(QMainWindow):
         group_layout = QVBoxLayout(group)
         group_layout.setSpacing(12)
         
-        # Mode Selector: Animation Speed vs Fixed Duration
+        # Mode Selector: Fixed Duration only
         mode_layout = QHBoxLayout()
         mode_label = QLabel("Control Mode:")
         mode_layout.addWidget(mode_label)
         
-        self.speed_mode_radio = QRadioButton("Animation Speed")
-        self.speed_mode_radio.setChecked(True)
-        self.speed_mode_radio.toggled.connect(self._on_mode_changed)
-        mode_layout.addWidget(self.speed_mode_radio)
-        
-        self.duration_mode_radio = QRadioButton("Fixed Duration")
-        self.duration_mode_radio.toggled.connect(self._on_mode_changed)
-        mode_layout.addWidget(self.duration_mode_radio)
+        mode_value_label = QLabel("Fixed Duration")
+        mode_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
+        mode_layout.addWidget(mode_value_label)
         
         mode_layout.addStretch()
         group_layout.addLayout(mode_layout)
         
-        # Animation Speed Control (shown when speed_mode is active)
-        self.speed_control_widget = QWidget()
-        speed_layout = QVBoxLayout(self.speed_control_widget)
-        speed_layout.setContentsMargins(0, 0, 0, 0)
-        speed_layout.setSpacing(5)
-        
-        speed_header = QHBoxLayout()
-        speed_label = QLabel("Animation Speed:")
-        speed_label.setToolTip("Controls how fast the drawing animation plays (independent of FPS)")
-        self.speed_value_label = QLabel(f"{self.speed:.1f}")
-        self.speed_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
-        speed_header.addWidget(speed_label)
-        speed_header.addStretch()
-        speed_header.addWidget(self.speed_value_label)
-        speed_layout.addLayout(speed_header)
-        
-        self.speed_slider = QSlider(Qt.Orientation.Horizontal)
-        self.speed_slider.setMinimum(10)
-        self.speed_slider.setMaximum(150)
-        self.speed_slider.setValue(int(self.speed * 10))
-        self.speed_slider.valueChanged.connect(
-            lambda v: self.speed_value_label.setText(f"{v/10:.1f}")
-        )
-        speed_layout.addWidget(self.speed_slider)
-        group_layout.addWidget(self.speed_control_widget)
-        
-        # Fixed Duration Control (shown when duration_mode is active)
-        self.duration_control_widget = QWidget()
-        duration_layout = QGridLayout(self.duration_control_widget)
-        duration_layout.setContentsMargins(0, 0, 0, 0)
+        # Fixed Duration Control
+        duration_layout = QGridLayout()
+        duration_layout.setContentsMargins(0, 10, 0, 0)
         duration_layout.setSpacing(10)
         
         duration_label = QLabel("Target Duration:")
         duration_label.setToolTip("Set the exact duration for the full animation to complete")
         duration_layout.addWidget(duration_label, 0, 0)
         
-        self.duration_input = QLineEdit("30")
+        self.duration_input = QLineEdit("10")
         self.duration_input.setMaximumWidth(100)
         self.duration_input.setPlaceholderText("seconds")
         duration_layout.addWidget(self.duration_input, 0, 1)
@@ -614,12 +578,11 @@ class ControlPanel(QMainWindow):
         duration_layout.addWidget(duration_unit_label, 0, 2)
         
         duration_info = QLabel("ℹ️ Animation speed will auto-adjust to match this duration")
-        duration_info.setStyleSheet("QLabel { color: #9ca3af; font-size: 10px; }")
+        duration_info.setStyleSheet("QLabel { color: #8b7355; font-size: 10px; }")
         duration_info.setWordWrap(True)
         duration_layout.addWidget(duration_info, 1, 0, 1, 3)
         
-        self.duration_control_widget.setVisible(False)  # Hidden by default
-        group_layout.addWidget(self.duration_control_widget)
+        group_layout.addLayout(duration_layout)
         
         # Thickness Scale
         thickness_layout = QVBoxLayout()
@@ -628,7 +591,7 @@ class ControlPanel(QMainWindow):
         thickness_header = QHBoxLayout()
         thickness_label = QLabel("Thickness Scale:")
         self.thickness_value_label = QLabel(f"{self.thickness:.1f}")
-        self.thickness_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
+        self.thickness_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
         thickness_header.addWidget(thickness_label)
         thickness_header.addStretch()
         thickness_header.addWidget(self.thickness_value_label)
@@ -695,19 +658,21 @@ class ControlPanel(QMainWindow):
         upload_btn = QPushButton("Upload Pen PNG")
         upload_btn.setStyleSheet("""
             QPushButton {
-                background-color: #22c55e;
+                background-color: #c2785a;
                 color: white;
                 padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: 500;
             }
             QPushButton:hover {
-                background-color: #16a34a;
+                background-color: #a85d44;
             }
         """)
         upload_btn.clicked.connect(self._upload_pen_image)
         upload_layout.addWidget(upload_btn)
         
         self.pen_status_label = QLabel("Custom pen loaded" if self.custom_pen_path else "No custom pen")
-        self.pen_status_label.setStyleSheet("QLabel { color: #9ca3af; font-size: 10px; }")
+        self.pen_status_label.setStyleSheet("QLabel { color: #8b7355; font-size: 10px; }")
         upload_layout.addWidget(self.pen_status_label)
         
         # Add pen preview
@@ -716,8 +681,8 @@ class ControlPanel(QMainWindow):
         self.pen_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.pen_preview_label.setStyleSheet("""
             QLabel {
-                background-color: #374151;
-                border: 1px solid #4b5563;
+                background-color: #ffffff;
+                border: 1px solid #d4c4b0;
                 border-radius: 4px;
             }
         """)
@@ -730,12 +695,14 @@ class ControlPanel(QMainWindow):
         configure_btn = QPushButton("Configure Pen Tip")
         configure_btn.setStyleSheet("""
             QPushButton {
-                background-color: #8b5cf6;
+                background-color: #c2785a;
                 color: white;
                 padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: 500;
             }
             QPushButton:hover {
-                background-color: #7c3aed;
+                background-color: #a85d44;
             }
         """)
         configure_btn.clicked.connect(self._configure_pen_tip)
@@ -748,7 +715,7 @@ class ControlPanel(QMainWindow):
         scale_header = QHBoxLayout()
         scale_label = QLabel("Pen Scale:")
         self.pen_scale_value_label = QLabel(f"{self.pen_scale:.1f}x")
-        self.pen_scale_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
+        self.pen_scale_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
         scale_header.addWidget(scale_label)
         scale_header.addStretch()
         scale_header.addWidget(self.pen_scale_value_label)
@@ -790,7 +757,7 @@ class ControlPanel(QMainWindow):
         thickness_header = QHBoxLayout()
         thickness_label = QLabel("Border Thickness:")
         self.frame_thickness_value_label = QLabel(f"{int(self.frame_thickness)}")
-        self.frame_thickness_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
+        self.frame_thickness_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
         thickness_header.addWidget(thickness_label)
         thickness_header.addStretch()
         thickness_header.addWidget(self.frame_thickness_value_label)
@@ -814,7 +781,7 @@ class ControlPanel(QMainWindow):
         speed_header = QHBoxLayout()
         speed_label = QLabel("Border Draw Speed:")
         self.frame_speed_value_label = QLabel(f"{self.frame_speed:.1f}x")
-        self.frame_speed_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
+        self.frame_speed_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
         speed_header.addWidget(speed_label)
         speed_header.addStretch()
         speed_header.addWidget(self.frame_speed_value_label)
@@ -838,7 +805,7 @@ class ControlPanel(QMainWindow):
         margin_header = QHBoxLayout()
         margin_label = QLabel("Border Margin:")
         self.frame_margin_value_label = QLabel(f"{int(self.frame_margin)}px")
-        self.frame_margin_value_label.setStyleSheet("QLabel { color: #8b5cf6; font-weight: bold; }")
+        self.frame_margin_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
         margin_header.addWidget(margin_label)
         margin_header.addStretch()
         margin_header.addWidget(self.frame_margin_value_label)
@@ -879,7 +846,7 @@ class ControlPanel(QMainWindow):
         
         video_settings_layout.addWidget(QLabel("Output FPS:"), 0, 0)
         fps_info = QLabel("<b>60 FPS</b> (always smooth)")
-        fps_info.setStyleSheet("QLabel { color: #8b5cf6; }")
+        fps_info.setStyleSheet("QLabel { color: #c2785a; }")
         video_settings_layout.addWidget(fps_info, 0, 1)
         
         video_settings_layout.addWidget(QLabel("Quality:"), 0, 2)
@@ -901,13 +868,13 @@ class ControlPanel(QMainWindow):
         # Frame count
         count_layout = QVBoxLayout()
         count_label = QLabel("Recorded Frames:")
-        count_label.setStyleSheet("QLabel { color: #9ca3af; font-size: 10px; }")
+        count_label.setStyleSheet("QLabel { color: #8b7355; font-size: 10px; }")
         count_layout.addWidget(count_label)
         
         self.frame_count_label = QLabel("0")
         self.frame_count_label.setStyleSheet("""
             QLabel {
-                color: #8b5cf6;
+                color: #c2785a;
                 font-size: 20px;
                 font-weight: bold;
             }
@@ -924,15 +891,16 @@ class ControlPanel(QMainWindow):
         btn_row1 = QHBoxLayout()
         btn_row1.setSpacing(8)
         
-        clear_btn = QPushButton("Clear Frames")
-        clear_btn.setIcon(load_icon("clear"))
+        clear_btn = QPushButton("🗑️ Clear Frames")
         clear_btn.setStyleSheet("""
             QPushButton {
-                background-color: #ef4444;
+                background-color: #d97766;
                 color: white;
+                border-radius: 6px;
+                font-weight: 500;
             }
             QPushButton:hover {
-                background-color: #dc2626;
+                background-color: #c85d4d;
             }
         """)
         clear_btn.clicked.connect(self._clear_frames)
@@ -948,15 +916,16 @@ class ControlPanel(QMainWindow):
         btn_row2 = QHBoxLayout()
         btn_row2.setSpacing(8)
         
-        generate_btn = QPushButton("Generate Video")
-        generate_btn.setIcon(load_icon("video"))
+        generate_btn = QPushButton("🎥 Generate Video")
         generate_btn.setStyleSheet("""
             QPushButton {
-                background-color: #22c55e;
+                background-color: #8fad88;
                 color: white;
+                border-radius: 6px;
+                font-weight: 500;
             }
             QPushButton:hover {
-                background-color: #16a34a;
+                background-color: #7a9773;
             }
         """)
         generate_btn.clicked.connect(self._generate_video)
@@ -975,11 +944,10 @@ class ControlPanel(QMainWindow):
     
     def _create_launch_button(self, layout):
         """Create launch button."""
-        launch_btn = QPushButton("LAUNCH SIMULATION")
-        launch_btn.setIcon(load_icon("launch"))
+        launch_btn = QPushButton("🚀 LAUNCH SIMULATION")
         launch_btn.setStyleSheet("""
             QPushButton {
-                background-color: #8b5cf6;
+                background-color: #c2785a;
                 color: white;
                 font-size: 16px;
                 font-weight: bold;
@@ -987,10 +955,10 @@ class ControlPanel(QMainWindow):
                 border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: #7c3aed;
+                background-color: #a85d44;
             }
             QPushButton:pressed {
-                background-color: #6d28d9;
+                background-color: #8f4e36;
             }
         """)
         launch_btn.clicked.connect(self._launch_simulation)
@@ -1001,8 +969,8 @@ class ControlPanel(QMainWindow):
         self.status_label = QLabel("Ready")
         self.status_label.setStyleSheet("""
             QLabel {
-                background-color: #1f2937;
-                color: #9ca3af;
+                background-color: #e8ddd0;
+                color: #6b5444;
                 padding: 8px 12px;
                 border-radius: 4px;
                 font-size: 10px;
@@ -1170,9 +1138,11 @@ class ControlPanel(QMainWindow):
         quality_map = {"low": 28, "medium": 23, "high": 18}
         quality_crf = quality_map.get(self.video_quality_combo.currentText(), 23)
         
-        # Generate output filename
+        # Generate output filename in output/videos directory
+        output_dir = BASE_DIR / "output" / "videos"
+        output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        output_path = SIMULATION_DIR / f"output_{timestamp}_60fps.mp4"
+        output_path = output_dir / f"output_{timestamp}_60fps.mp4"
         
         # Start video generation thread
         self.video_thread = VideoGenerationThread(
@@ -1247,26 +1217,21 @@ class ControlPanel(QMainWindow):
             return
         
         # Get current values from UI
-        # Check which mode is active
-        if self.duration_mode_radio.isChecked():
-            # Duration mode: pass target duration, simulation will auto-calculate speed
-            try:
-                target_duration = float(self.duration_input.text())
-                if target_duration <= 0:
-                    raise ValueError("Duration must be positive")
-            except ValueError:
-                QMessageBox.critical(
-                    self,
-                    "Invalid Duration",
-                    "Please enter a valid positive number for duration (in seconds)."
-                )
-                return
-            # We'll pass target-duration as a special flag
-            speed = None  # Will be calculated by simulation
-        else:
-            # Speed mode: use slider value
-            speed = self.speed_slider.value() / 10.0
-            target_duration = None
+        # Fixed Duration mode only
+        try:
+            target_duration = float(self.duration_input.text())
+            if target_duration <= 0:
+                raise ValueError("Duration must be positive")
+        except ValueError:
+            QMessageBox.critical(
+                self,
+                "Invalid Duration",
+                "Please enter a valid positive number for duration (in seconds)."
+            )
+            return
+        
+        # Speed will be auto-calculated by simulation
+        speed = None
         
         thickness = self.thickness_slider.value() / 10.0
         frame_thickness = int(self.frame_thickness_slider.value())
@@ -1288,11 +1253,8 @@ class ControlPanel(QMainWindow):
             "--frame-margin", str(frame_margin)
         ]
         
-        # Add speed or duration parameter
-        if target_duration is not None:
-            cmd.extend(["--target-duration", str(target_duration)])
-        else:
-            cmd.extend(["--speed", str(speed)])
+        # Add duration parameter (fixed duration mode only)
+        cmd.extend(["--target-duration", str(target_duration)])
         
         # Add conditional flags
         if not self.show_pen_toggle.isChecked():

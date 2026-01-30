@@ -1,0 +1,19 @@
+{
+  "width": "800",
+  "height": "1000",
+  "fps": "60",
+  "speed": 5.0,
+  "thickness": 1.0,
+  "use_gpu": true,
+  "show_pen": true,
+  "frame_thickness": 6.0,
+  "frame_speed": 1.0,
+  "frame_margin": 20.0,
+  "use_custom_pen": false,
+  "custom_pen_path": "E:\\test_repos\\drawer\\coloring_book_drawer\\assets\\custom_pen.png",
+  "pen_scale": 1.0,
+  "pen_rotation": true,
+  "auto_record": false,
+  "video_fps": "60",
+  "video_quality": "high"
+}
