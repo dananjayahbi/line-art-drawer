@@ -1,0 +1,25 @@
+{
+    "id": "magnetic_iron_art",
+    "name": "Magnetic Iron Filings Art",
+    "description": "Recreates the cinematic process of magnetic iron filings forming a portrait on parchment with realistic physics simulation",
+    "icon": "fa-magnet",
+    "color": "#6b7280",
+    "entry_point": "main.py",
+    "control_panel": "control_panel.py",
+    "dependencies": [
+        "pygame",
+        "numpy",
+        "opencv-python",
+        "opencv-contrib-python",
+        "scipy",
+        "pillow",
+        "PySide6"
+    ],
+    "features": [
+        "10,000+ metallic particles",
+        "Inverse-square law physics",
+        "Portrait attraction mapping",
+        "Cinematic rendering",
+        "9:16 vertical video output"
+    ]
+}
