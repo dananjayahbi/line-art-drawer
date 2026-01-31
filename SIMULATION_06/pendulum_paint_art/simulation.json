@@ -1,0 +1,17 @@
+{
+    "id": "pendulum_paint_art",
+    "name": "Pendulum Paint Art",
+    "description": "A mesmerizing pendulum paint simulation that creates artwork through physics-based pendulum motion with dripping paint effects. Features dual-axis oscillation with attraction-weighted dripping to recreate target images.",
+    "icon": "fa-paint-brush",
+    "color": "#e07b53",
+    "version": "1.0.0",
+    "author": "AI Assistant",
+    "license": "MIT",
+    "homepage": "https://github.com/dananjayahbi/simulations-system",
+    "min_loops_version": "1.0.0",
+    "tags": ["pendulum", "paint", "physics", "dripping", "art", "animation", "satisfying"],
+    "requires_pygame": true,
+    "entry_point": "main.py",
+    "control_panel": "control_panel.py",
+    "dependencies": ["opencv-python", "numpy", "pillow", "scipy", "pygame"]
+}

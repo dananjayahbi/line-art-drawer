@@ -1,0 +1,21 @@
+{
+  "width": "800",
+  "height": "1000",
+  "fps": "60",
+  "target_duration": "30.0",
+  "pendulum_length": "300",
+  "initial_angle_x": "45",
+  "initial_angle_y": "30",
+  "damping_x": "0.02",
+  "damping_y": "0.02",
+  "gravity": "9.8",
+  "drip_rate": "0.15",
+  "paint_thickness": "8",
+  "viscosity": "0.7",
+  "paint_color": "#2c1810",
+  "show_pendulum": true,
+  "show_trails": true,
+  "auto_record": false,
+  "video_fps": "60",
+  "video_quality": "high"
+}
