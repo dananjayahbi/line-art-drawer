@@ -1124,11 +1124,11 @@ class ControlPanel(QMainWindow):
             "--direction", self.direction_selector.get_direction(),
             "--criteria", self.criteria_selector.get_criteria(),
             "--threshold", str(self.threshold_slider.value() / 100.0),
-            "--color-style", self.color_style_selector.get_style(),
-            "--glow-intensity", str(self.glow_slider.value() / 100.0),
-            "--blur-strength", str(self.blur_slider.value() / 100.0),
-            "--beat-drop-time", str(self.beat_drop_input.value()),
-            "--zoom-intensity", str(self.zoom_slider.value() / 100.0),
+            "--style", self.color_style_selector.get_style(),
+            "--glow", str(self.glow_slider.value() / 100.0),
+            "--blur", str(self.blur_slider.value() / 100.0),
+            "--beat-timing", str(self.beat_drop_input.value()),
+            "--zoom", str(self.zoom_slider.value() / 100.0),
         ]
         
         # Add conditional flags

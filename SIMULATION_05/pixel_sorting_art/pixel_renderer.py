@@ -6,11 +6,17 @@ Manim-based renderer for cinematic pixel sorting visualization
 with vaporwave/cyberpunk aesthetics.
 """
 
+from __future__ import annotations
+
 import numpy as np
-from typing import List, Tuple, Optional, Dict, Any, Literal
+from typing import List, Tuple, Optional, Dict, Any, Literal, TYPE_CHECKING
 from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
+
+# Type checking imports (only for type hints, not runtime)
+if TYPE_CHECKING:
+    from manim import VGroup, AnimationGroup
 
 try:
     from manim import (
@@ -26,7 +32,9 @@ try:
     HAS_MANIM = True
 except ImportError:
     HAS_MANIM = False
-    print("Manim not found. Install with: pip install manim")
+    # Stub classes for when Manim is not available
+    VGroup = None
+    AnimationGroup = None
 
 
 class ColorStyle(Enum):
@@ -162,7 +170,7 @@ class PixelRenderer:
         y = (self.height / 2 - row) * self.pixel_size  # Flip Y axis
         return (x, y, 0)
     
-    def create_pixel_mobjects(self, image: np.ndarray) -> VGroup:
+    def create_pixel_mobjects(self, image: np.ndarray) -> "VGroup":
         """
         Create Manim mobjects for each pixel in the image.
         
@@ -263,7 +271,7 @@ class PixelRenderer:
         self,
         pixel_positions: List[Tuple[int, int]],
         intensity: float = 1.0
-    ) -> VGroup:
+    ) -> "VGroup":
         """
         Create neon glow effects for specified pixels.
         
@@ -341,7 +349,7 @@ class PixelRenderer:
         pixel_positions: List[Tuple[int, int]],
         direction: Tuple[float, float],
         strength: float = 0.5
-    ) -> VGroup:
+    ) -> "VGroup":
         """
         Create motion blur effect for moving pixels.
         

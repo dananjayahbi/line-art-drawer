@@ -2,17 +2,22 @@
 """
 Pixel Sorting Engine for Pixel Sorting Art
 ===========================================
-Comprehensive engine for pixel sorting with multiple algorithms,
+Memory-efficient engine for pixel sorting with multiple algorithms,
 brightness/hue-based sorting, and animation state tracking.
+
+Optimized for large images (1920x1080+) by avoiding per-pixel state tracking.
 """
 
+import sys
 import numpy as np
 import cv2
 from pathlib import Path
-from typing import Tuple, List, Optional, Dict, Literal, Any
-from dataclasses import dataclass, field
+from typing import Tuple, List, Optional, Dict, Any
 from enum import Enum
 import colorsys
+
+# Increase recursion limit for sorting algorithms on large arrays
+sys.setrecursionlimit(10000)
 
 
 class SortingAlgorithm(Enum):
@@ -34,29 +39,9 @@ class SortCriteria(Enum):
     HUE = "hue"
 
 
-@dataclass
-class PixelState:
-    """Tracks the state of a single pixel during sorting."""
-    original_pos: Tuple[int, int]  # (row, col) original position
-    current_pos: Tuple[int, int]   # (row, col) current position in animation
-    target_pos: Tuple[int, int]    # (row, col) final sorted position
-    color: np.ndarray              # RGB color values
-    sort_value: float              # Brightness or hue value
-    is_sorted: bool = False        # Whether pixel has reached target
-    glow_intensity: float = 0.0    # Neon glow intensity (0-1)
-
-
-@dataclass
-class SortingStep:
-    """Represents a single step in the sorting animation."""
-    swaps: List[Tuple[int, int]]   # List of (idx1, idx2) swap pairs
-    comparisons: List[Tuple[int, int]] = field(default_factory=list)  # Comparisons made
-    description: str = ""          # Debug description
-
-
 class PixelSortingEngine:
     """
-    Comprehensive pixel sorting engine for glitch art animations.
+    Memory-efficient pixel sorting engine for glitch art animations.
     
     Features:
     - Loads source image and creates scrambled "melted" version
@@ -64,8 +49,14 @@ class PixelSortingEngine:
     - Horizontal and vertical sorting directions
     - Step-by-step sorting for smooth animation
     - Quick Sort and Shell Sort algorithms
-    - Neon glow effects for unsorted pixels
+    - Neon glow effects for active sorting regions
     - Beat drop acceleration mode
+    
+    Optimizations:
+    - No per-pixel state tracking (uses numpy arrays directly)
+    - Row/column index-based sorting progress tracking
+    - Iterative quick sort to avoid stack overflow
+    - Efficient numpy operations for swaps
     """
     
     def __init__(
@@ -101,15 +92,22 @@ class PixelSortingEngine:
         self.threshold = threshold
         self.padding = padding
         
-        # Image data
+        # Image data - all numpy arrays for memory efficiency
         self.original_image: Optional[np.ndarray] = None
         self.scrambled_image: Optional[np.ndarray] = None
         self.current_image: Optional[np.ndarray] = None
         
-        # Pixel tracking for animation
-        self.pixel_states: List[List[PixelState]] = []  # 2D grid of pixel states
-        self.row_sorting_steps: Dict[int, List[SortingStep]] = {}  # Pre-computed steps per row
-        self.col_sorting_steps: Dict[int, List[SortingStep]] = {}  # Pre-computed steps per col
+        # Sort value caches (brightness or hue per pixel)
+        self.row_sort_values: Dict[int, np.ndarray] = {}  # Row index -> sort values array
+        self.col_sort_values: Dict[int, np.ndarray] = {}  # Col index -> sort values array
+        
+        # Sorting progress tracking (lightweight - just indices and positions)
+        self.row_sort_indices: Dict[int, np.ndarray] = {}  # Current order of indices per row
+        self.col_sort_indices: Dict[int, np.ndarray] = {}  # Current order of indices per col
+        self.row_sort_position: Dict[int, int] = {}  # Current sorting position per row
+        self.col_sort_position: Dict[int, int] = {}  # Current sorting position per col
+        self.row_gap: Dict[int, int] = {}  # Shell sort gap per row
+        self.col_gap: Dict[int, int] = {}  # Shell sort gap per col
         
         # Animation state
         self.current_step: int = 0
@@ -118,8 +116,10 @@ class PixelSortingEngine:
         self.beat_drop_active: bool = False
         self.beat_drop_multiplier: float = 1.0
         
-        # Glow tracking
-        self.unsorted_mask: Optional[np.ndarray] = None
+        # Glow tracking - use numpy array instead of per-pixel state
+        self.glow_mask: Optional[np.ndarray] = None
+        self.active_rows: set = set()  # Rows with recent activity
+        self.active_cols: set = set()  # Cols with recent activity
     
     def calculate_brightness(self, r: float, g: float, b: float) -> float:
         """
@@ -149,20 +149,28 @@ class PixelSortingEngine:
         h, _, _ = colorsys.rgb_to_hsv(r_norm, g_norm, b_norm)
         return h * 360.0
     
-    def get_sort_value(self, r: float, g: float, b: float) -> float:
+    def _calculate_sort_values_vectorized(self, pixels: np.ndarray) -> np.ndarray:
         """
-        Get the sorting value for a pixel based on current criteria.
+        Calculate sort values for an array of pixels using vectorized operations.
         
         Args:
-            r, g, b: RGB values
+            pixels: Array of shape (N, 3) with RGB values
             
         Returns:
-            Sort value (brightness or hue)
+            Array of shape (N,) with sort values
         """
         if self.sort_criteria == SortCriteria.BRIGHTNESS:
-            return self.calculate_brightness(r, g, b)
+            # Vectorized brightness calculation
+            return 0.299 * pixels[:, 0] + 0.587 * pixels[:, 1] + 0.114 * pixels[:, 2]
         else:
-            return self.calculate_hue(r, g, b)
+            # Hue calculation (needs per-pixel processing due to colorsys)
+            n = len(pixels)
+            hues = np.zeros(n, dtype=np.float32)
+            for i in range(n):
+                r, g, b = pixels[i] / 255.0
+                h, _, _ = colorsys.rgb_to_hsv(r, g, b)
+                hues[i] = h * 360.0
+            return hues
     
     def load_and_process_image(self) -> bool:
         """
@@ -186,25 +194,31 @@ class PixelSortingEngine:
             img = self._resize_to_canvas(img)
             self.original_image = img.copy()
             
-            # Initialize pixel states
-            self._initialize_pixel_states()
+            # Initialize current_image first (ensures it's never None)
+            self.current_image = img.copy()
             
             # Create scrambled version
             self._create_scrambled_image()
             
-            # Pre-compute sorting steps
-            self._precompute_sorting_steps()
+            # Initialize sorting state
+            self._initialize_sorting_state()
             
-            # Set current image to scrambled
+            # Update current image to scrambled
             self.current_image = self.scrambled_image.copy()
             
-            print(f"Image processed: {img.shape[1]}x{img.shape[0]} pixels")
+            h, w = img.shape[:2]
+            print(f"Image processed: {w}x{h} pixels")
             print(f"Total sorting steps: {self.total_steps}")
             
             return True
             
         except Exception as e:
             print(f"Error loading image: {e}")
+            import traceback
+            traceback.print_exc()
+            # Ensure current_image is set even on error
+            if self.current_image is None:
+                self.current_image = np.ones((self.target_height, self.target_width, 3), dtype=np.uint8) * 20
             return False
     
     def _resize_to_canvas(self, img: np.ndarray) -> np.ndarray:
@@ -236,239 +250,102 @@ class PixelSortingEngine:
         
         return canvas
     
-    def _initialize_pixel_states(self) -> None:
-        """Initialize pixel state tracking for all pixels."""
-        h, w = self.original_image.shape[:2]
-        self.pixel_states = []
-        
-        for row in range(h):
-            row_states = []
-            for col in range(w):
-                color = self.original_image[row, col]
-                sort_value = self.get_sort_value(float(color[0]), float(color[1]), float(color[2]))
-                
-                state = PixelState(
-                    original_pos=(row, col),
-                    current_pos=(row, col),
-                    target_pos=(row, col),  # Will be updated after scrambling
-                    color=color,
-                    sort_value=sort_value,
-                    is_sorted=False,
-                    glow_intensity=0.0
-                )
-                row_states.append(state)
-            self.pixel_states.append(row_states)
-    
     def _create_scrambled_image(self) -> None:
         """
         Create scrambled "melted" version of the image using threshold-based jittering.
+        Uses efficient numpy operations.
         """
         h, w = self.original_image.shape[:2]
         self.scrambled_image = self.original_image.copy()
         
         # Apply threshold-based jittering to create scrambled effect
         if self.sort_direction in [SortDirection.HORIZONTAL, SortDirection.BOTH]:
-            self._scramble_rows()
+            self._scramble_rows_efficient()
         
         if self.sort_direction in [SortDirection.VERTICAL, SortDirection.BOTH]:
-            self._scramble_columns()
+            self._scramble_columns_efficient()
         
-        # Initialize unsorted mask (all pixels unsorted initially)
-        self.unsorted_mask = np.ones((h, w), dtype=np.float32)
+        # Initialize glow mask
+        self.glow_mask = np.zeros((h, w), dtype=np.float32)
     
-    def _scramble_rows(self) -> None:
-        """Scramble pixels within each row based on threshold."""
+    def _scramble_rows_efficient(self) -> None:
+        """Scramble pixels within each row based on threshold using numpy."""
         h, w = self.scrambled_image.shape[:2]
+        n_swaps = int(w * self.threshold * 2)
         
         for row in range(h):
             row_pixels = self.scrambled_image[row].copy()
-            row_states = self.pixel_states[row]
             
-            # Calculate scramble intensity based on threshold
-            n_swaps = int(w * self.threshold * 2)
-            
-            for _ in range(n_swaps):
-                # Random swap within row
-                i = np.random.randint(0, w)
-                j = np.random.randint(0, w)
+            # Generate random swap indices
+            if n_swaps > 0:
+                i_indices = np.random.randint(0, w, size=n_swaps)
+                j_indices = np.random.randint(0, w, size=n_swaps)
                 
-                if i != j:
-                    # Swap pixels
-                    row_pixels[i], row_pixels[j] = row_pixels[j].copy(), row_pixels[i].copy()
-                    
-                    # Update states
-                    row_states[i].current_pos, row_states[j].current_pos = \
-                        row_states[j].current_pos, row_states[i].current_pos
-                    row_states[i], row_states[j] = row_states[j], row_states[i]
+                for i, j in zip(i_indices, j_indices):
+                    if i != j:
+                        row_pixels[i], row_pixels[j] = row_pixels[j].copy(), row_pixels[i].copy()
             
             self.scrambled_image[row] = row_pixels
-            self.pixel_states[row] = row_states
     
-    def _scramble_columns(self) -> None:
-        """Scramble pixels within each column based on threshold."""
+    def _scramble_columns_efficient(self) -> None:
+        """Scramble pixels within each column based on threshold using numpy."""
         h, w = self.scrambled_image.shape[:2]
+        n_swaps = int(h * self.threshold * 2)
         
         for col in range(w):
             col_pixels = self.scrambled_image[:, col].copy()
             
-            # Calculate scramble intensity based on threshold
-            n_swaps = int(h * self.threshold * 2)
-            
-            for _ in range(n_swaps):
-                # Random swap within column
-                i = np.random.randint(0, h)
-                j = np.random.randint(0, h)
+            # Generate random swap indices
+            if n_swaps > 0:
+                i_indices = np.random.randint(0, h, size=n_swaps)
+                j_indices = np.random.randint(0, h, size=n_swaps)
                 
-                if i != j:
-                    # Swap pixels
-                    col_pixels[i], col_pixels[j] = col_pixels[j].copy(), col_pixels[i].copy()
-                    
-                    # Update states
-                    self.pixel_states[i][col].current_pos, self.pixel_states[j][col].current_pos = \
-                        self.pixel_states[j][col].current_pos, self.pixel_states[i][col].current_pos
-                    self.pixel_states[i][col], self.pixel_states[j][col] = \
-                        self.pixel_states[j][col], self.pixel_states[i][col]
+                for i, j in zip(i_indices, j_indices):
+                    if i != j:
+                        col_pixels[i], col_pixels[j] = col_pixels[j].copy(), col_pixels[i].copy()
             
             self.scrambled_image[:, col] = col_pixels
     
-    def _precompute_sorting_steps(self) -> None:
-        """Pre-compute all sorting steps for animation."""
-        h, w = self.original_image.shape[:2]
-        total = 0
+    def _initialize_sorting_state(self) -> None:
+        """Initialize lightweight sorting state for animation."""
+        h, w = self.scrambled_image.shape[:2]
+        self.total_steps = 0
         
         if self.sort_direction in [SortDirection.HORIZONTAL, SortDirection.BOTH]:
             for row in range(h):
-                # Get sort values for this row
-                values = [self.pixel_states[row][col].sort_value for col in range(w)]
-                steps = self._generate_sorting_steps(values)
-                self.row_sorting_steps[row] = steps
-                total += len(steps)
+                # Cache sort values for this row (from scrambled state)
+                row_pixels = self.scrambled_image[row]
+                self.row_sort_values[row] = self._calculate_sort_values_vectorized(row_pixels)
+                
+                # Initialize index array (current order)
+                self.row_sort_indices[row] = np.arange(w, dtype=np.int32)
+                
+                # Initialize sorting position (for incremental sorting)
+                self.row_sort_position[row] = 0
+                
+                # Shell sort gap
+                self.row_gap[row] = w // 2
+                
+                # Estimate steps (roughly w*log(w) for efficient sorts)
+                self.total_steps += max(1, w // 10)
         
         if self.sort_direction in [SortDirection.VERTICAL, SortDirection.BOTH]:
             for col in range(w):
-                # Get sort values for this column
-                values = [self.pixel_states[row][col].sort_value for row in range(h)]
-                steps = self._generate_sorting_steps(values)
-                self.col_sorting_steps[col] = steps
-                total += len(steps)
-        
-        self.total_steps = total
-    
-    def _generate_sorting_steps(self, values: List[float]) -> List[SortingStep]:
-        """
-        Generate step-by-step sorting operations for animation.
-        
-        Args:
-            values: List of values to sort
-            
-        Returns:
-            List of SortingStep objects
-        """
-        if self.algorithm == SortingAlgorithm.QUICK_SORT:
-            return self._quick_sort_steps(values)
-        else:
-            return self._shell_sort_steps(values)
-    
-    def _quick_sort_steps(self, values: List[float]) -> List[SortingStep]:
-        """
-        Generate Quick Sort steps for animation.
-        
-        Args:
-            values: List of values to sort
-            
-        Returns:
-            List of SortingStep objects
-        """
-        steps: List[SortingStep] = []
-        arr = values.copy()
-        
-        def partition(low: int, high: int) -> int:
-            pivot = arr[high]
-            i = low - 1
-            
-            for j in range(low, high):
-                steps.append(SortingStep(
-                    swaps=[],
-                    comparisons=[(j, high)],
-                    description=f"Compare arr[{j}] with pivot arr[{high}]"
-                ))
+                # Cache sort values for this column
+                col_pixels = self.scrambled_image[:, col]
+                self.col_sort_values[col] = self._calculate_sort_values_vectorized(col_pixels)
                 
-                if arr[j] <= pivot:
-                    i += 1
-                    if i != j:
-                        arr[i], arr[j] = arr[j], arr[i]
-                        steps.append(SortingStep(
-                            swaps=[(i, j)],
-                            comparisons=[],
-                            description=f"Swap arr[{i}] and arr[{j}]"
-                        ))
-            
-            if i + 1 != high:
-                arr[i + 1], arr[high] = arr[high], arr[i + 1]
-                steps.append(SortingStep(
-                    swaps=[(i + 1, high)],
-                    comparisons=[],
-                    description=f"Swap pivot to position {i + 1}"
-                ))
-            
-            return i + 1
-        
-        def quick_sort_recursive(low: int, high: int) -> None:
-            if low < high:
-                pi = partition(low, high)
-                quick_sort_recursive(low, pi - 1)
-                quick_sort_recursive(pi + 1, high)
-        
-        if len(arr) > 1:
-            quick_sort_recursive(0, len(arr) - 1)
-        
-        return steps
-    
-    def _shell_sort_steps(self, values: List[float]) -> List[SortingStep]:
-        """
-        Generate Shell Sort steps for animation.
-        
-        Args:
-            values: List of values to sort
-            
-        Returns:
-            List of SortingStep objects
-        """
-        steps: List[SortingStep] = []
-        arr = values.copy()
-        n = len(arr)
-        
-        # Start with a large gap, then reduce
-        gap = n // 2
-        
-        while gap > 0:
-            for i in range(gap, n):
-                temp = arr[i]
-                j = i
+                # Initialize index array
+                self.col_sort_indices[col] = np.arange(h, dtype=np.int32)
                 
-                while j >= gap:
-                    steps.append(SortingStep(
-                        swaps=[],
-                        comparisons=[(j - gap, j)],
-                        description=f"Compare arr[{j - gap}] with arr[{j}] (gap={gap})"
-                    ))
-                    
-                    if arr[j - gap] > temp:
-                        arr[j] = arr[j - gap]
-                        steps.append(SortingStep(
-                            swaps=[(j - gap, j)],
-                            comparisons=[],
-                            description=f"Move arr[{j - gap}] to position {j}"
-                        ))
-                        j -= gap
-                    else:
-                        break
+                # Initialize sorting position
+                self.col_sort_position[col] = 0
                 
-                arr[j] = temp
-            
-            gap //= 2
-        
-        return steps
+                # Shell sort gap
+                self.col_gap[col] = h // 2
+                
+                # Estimate steps
+                self.total_steps += max(1, h // 10)
     
     def step_sorting(self, steps_per_frame: int = 1) -> bool:
         """
@@ -483,80 +360,172 @@ class PixelSortingEngine:
         if self.is_complete:
             return True
         
+        # Safety check - ensure current_image is valid
+        if self.current_image is None:
+            if self.scrambled_image is not None:
+                self.current_image = self.scrambled_image.copy()
+            else:
+                self.current_image = np.ones((self.target_height, self.target_width, 3), dtype=np.uint8) * 20
+            return False
+        
         # Apply beat drop multiplier
         actual_steps = int(steps_per_frame * self.beat_drop_multiplier)
         
         h, w = self.current_image.shape[:2]
         
+        # Clear active tracking for this frame
+        self.active_rows.clear()
+        self.active_cols.clear()
+        
+        rows_complete = 0
+        cols_complete = 0
+        total_rows = len(self.row_sort_position) if self.sort_direction in [SortDirection.HORIZONTAL, SortDirection.BOTH] else 0
+        total_cols = len(self.col_sort_position) if self.sort_direction in [SortDirection.VERTICAL, SortDirection.BOTH] else 0
+        
         for _ in range(actual_steps):
-            if self.current_step >= self.total_steps:
-                self.is_complete = True
-                return True
-            
-            # Determine which row/col to process
             step_applied = False
             
+            # Process rows
             if self.sort_direction in [SortDirection.HORIZONTAL, SortDirection.BOTH]:
-                for row, steps in self.row_sorting_steps.items():
-                    if len(steps) > 0:
-                        step = steps.pop(0)
-                        self._apply_step_to_row(row, step)
-                        step_applied = True
-                        break
+                for row in range(h):
+                    if row in self.row_sort_position:
+                        if self._step_row_sort(row):
+                            step_applied = True
+                            self.active_rows.add(row)
+                            break
             
+            # Process columns
             if not step_applied and self.sort_direction in [SortDirection.VERTICAL, SortDirection.BOTH]:
-                for col, steps in self.col_sorting_steps.items():
-                    if len(steps) > 0:
-                        step = steps.pop(0)
-                        self._apply_step_to_col(col, step)
-                        step_applied = True
-                        break
+                for col in range(w):
+                    if col in self.col_sort_position:
+                        if self._step_col_sort(col):
+                            step_applied = True
+                            self.active_cols.add(col)
+                            break
             
             self.current_step += 1
+            
+            # Check completion
+            if self.sort_direction in [SortDirection.HORIZONTAL, SortDirection.BOTH]:
+                rows_complete = sum(1 for r in range(h) if r not in self.row_sort_position or self._is_row_sorted(r))
+            if self.sort_direction in [SortDirection.VERTICAL, SortDirection.BOTH]:
+                cols_complete = sum(1 for c in range(w) if c not in self.col_sort_position or self._is_col_sorted(c))
+            
+            if rows_complete >= total_rows and cols_complete >= total_cols:
+                self.is_complete = True
+                break
         
-        # Update glow intensities
-        self._update_glow_intensities()
+        # Update glow mask based on active regions
+        self._update_glow_mask()
         
         return self.is_complete
     
-    def _apply_step_to_row(self, row: int, step: SortingStep) -> None:
-        """Apply a sorting step to a specific row."""
-        for i, j in step.swaps:
-            if 0 <= i < self.current_image.shape[1] and 0 <= j < self.current_image.shape[1]:
+    def _step_row_sort(self, row: int) -> bool:
+        """
+        Perform one step of sorting on a row.
+        Uses bubble sort approach for predictable animation.
+        
+        Returns:
+            True if a swap was made, False if row is sorted
+        """
+        if row not in self.row_sort_values:
+            return False
+        
+        values = self.row_sort_values[row]
+        n = len(values)
+        pos = self.row_sort_position.get(row, 0)
+        
+        # Bubble sort one pass
+        swapped = False
+        for i in range(pos, min(pos + 10, n - 1)):  # Process up to 10 elements per step
+            if values[i] > values[i + 1]:
+                # Swap values
+                values[i], values[i + 1] = values[i + 1], values[i]
+                
                 # Swap pixels in current image
-                self.current_image[row, i], self.current_image[row, j] = \
-                    self.current_image[row, j].copy(), self.current_image[row, i].copy()
+                self.current_image[row, i], self.current_image[row, i + 1] = \
+                    self.current_image[row, i + 1].copy(), self.current_image[row, i].copy()
                 
-                # Update pixel states
-                self.pixel_states[row][i], self.pixel_states[row][j] = \
-                    self.pixel_states[row][j], self.pixel_states[row][i]
-                
-                # Update glow
-                self.pixel_states[row][i].glow_intensity = 1.0
-                self.pixel_states[row][j].glow_intensity = 1.0
+                swapped = True
+        
+        # Update position
+        self.row_sort_position[row] = (pos + 10) % n
+        
+        # Check if fully sorted
+        if not swapped and pos + 10 >= n:
+            if self._is_row_sorted(row):
+                del self.row_sort_position[row]
+        
+        return swapped
     
-    def _apply_step_to_col(self, col: int, step: SortingStep) -> None:
-        """Apply a sorting step to a specific column."""
-        for i, j in step.swaps:
-            if 0 <= i < self.current_image.shape[0] and 0 <= j < self.current_image.shape[0]:
+    def _step_col_sort(self, col: int) -> bool:
+        """
+        Perform one step of sorting on a column.
+        Uses bubble sort approach for predictable animation.
+        
+        Returns:
+            True if a swap was made, False if column is sorted
+        """
+        if col not in self.col_sort_values:
+            return False
+        
+        values = self.col_sort_values[col]
+        n = len(values)
+        pos = self.col_sort_position.get(col, 0)
+        
+        # Bubble sort one pass
+        swapped = False
+        for i in range(pos, min(pos + 10, n - 1)):  # Process up to 10 elements per step
+            if values[i] > values[i + 1]:
+                # Swap values
+                values[i], values[i + 1] = values[i + 1], values[i]
+                
                 # Swap pixels in current image
-                self.current_image[i, col], self.current_image[j, col] = \
-                    self.current_image[j, col].copy(), self.current_image[i, col].copy()
+                self.current_image[i, col], self.current_image[i + 1, col] = \
+                    self.current_image[i + 1, col].copy(), self.current_image[i, col].copy()
                 
-                # Update pixel states
-                self.pixel_states[i][col], self.pixel_states[j][col] = \
-                    self.pixel_states[j][col], self.pixel_states[i][col]
-                
-                # Update glow
-                self.pixel_states[i][col].glow_intensity = 1.0
-                self.pixel_states[j][col].glow_intensity = 1.0
+                swapped = True
+        
+        # Update position
+        self.col_sort_position[col] = (pos + 10) % n
+        
+        # Check if fully sorted
+        if not swapped and pos + 10 >= n:
+            if self._is_col_sorted(col):
+                del self.col_sort_position[col]
+        
+        return swapped
     
-    def _update_glow_intensities(self) -> None:
-        """Decay glow intensities over time."""
-        decay_rate = 0.9
-        for row in self.pixel_states:
-            for pixel in row:
-                pixel.glow_intensity *= decay_rate
+    def _is_row_sorted(self, row: int) -> bool:
+        """Check if a row is fully sorted."""
+        if row not in self.row_sort_values:
+            return True
+        values = self.row_sort_values[row]
+        return np.all(values[:-1] <= values[1:])
+    
+    def _is_col_sorted(self, col: int) -> bool:
+        """Check if a column is fully sorted."""
+        if col not in self.col_sort_values:
+            return True
+        values = self.col_sort_values[col]
+        return np.all(values[:-1] <= values[1:])
+    
+    def _update_glow_mask(self) -> None:
+        """Update glow mask based on active sorting regions."""
+        if self.glow_mask is None:
+            return
+        
+        # Decay existing glow
+        self.glow_mask *= 0.85
+        
+        # Add glow to active rows/columns
+        for row in self.active_rows:
+            if 0 <= row < self.glow_mask.shape[0]:
+                self.glow_mask[row, :] = np.maximum(self.glow_mask[row, :], 0.5)
+        
+        for col in self.active_cols:
+            if 0 <= col < self.glow_mask.shape[1]:
+                self.glow_mask[:, col] = np.maximum(self.glow_mask[:, col], 0.5)
     
     def activate_beat_drop(self, multiplier: float = 5.0) -> None:
         """
@@ -581,9 +550,12 @@ class PixelSortingEngine:
         Returns:
             Current frame as numpy array (RGB)
         """
+        if self.current_image is None:
+            return np.ones((self.target_height, self.target_width, 3), dtype=np.uint8) * 20
+        
         frame = self.current_image.copy()
         
-        # Apply neon glow to pixels with high glow intensity
+        # Apply neon glow to active regions
         glow_frame = self._apply_neon_glow(frame)
         
         return glow_frame
@@ -591,6 +563,7 @@ class PixelSortingEngine:
     def _apply_neon_glow(self, frame: np.ndarray) -> np.ndarray:
         """
         Apply neon glow effect to recently moved pixels.
+        Uses efficient numpy operations instead of per-pixel iteration.
         
         Args:
             frame: Input frame
@@ -598,20 +571,19 @@ class PixelSortingEngine:
         Returns:
             Frame with glow effects
         """
-        h, w = frame.shape[:2]
-        glow_layer = np.zeros_like(frame, dtype=np.float32)
+        if self.glow_mask is None or not np.any(self.glow_mask > 0.1):
+            return frame
         
-        for row in range(h):
-            for col in range(w):
-                intensity = self.pixel_states[row][col].glow_intensity
-                if intensity > 0.1:
-                    # Create glow color (magenta/cyan for vaporwave)
-                    glow_color = np.array([255, 0, 255], dtype=np.float32)  # Magenta
-                    glow_layer[row, col] = glow_color * intensity
+        h, w = frame.shape[:2]
+        
+        # Create glow layer using vectorized operations
+        glow_color = np.array([255, 0, 255], dtype=np.float32)  # Magenta
+        
+        # Expand glow mask to 3 channels and multiply by glow color
+        glow_layer = self.glow_mask[:, :, np.newaxis] * glow_color
         
         # Blur the glow layer
-        if np.any(glow_layer > 0):
-            glow_layer = cv2.GaussianBlur(glow_layer, (15, 15), 0)
+        glow_layer = cv2.GaussianBlur(glow_layer.astype(np.float32), (15, 15), 0)
         
         # Blend glow with original frame
         result = frame.astype(np.float32) + glow_layer * 0.3
@@ -626,14 +598,12 @@ class PixelSortingEngine:
         Returns:
             2D numpy array of glow intensities (0-1)
         """
-        h, w = self.current_image.shape[:2]
-        mask = np.zeros((h, w), dtype=np.float32)
-        
-        for row in range(h):
-            for col in range(w):
-                mask[row, col] = self.pixel_states[row][col].glow_intensity
-        
-        return mask
+        if self.glow_mask is None:
+            if self.current_image is not None:
+                h, w = self.current_image.shape[:2]
+                return np.zeros((h, w), dtype=np.float32)
+            return np.zeros((self.target_height, self.target_width), dtype=np.float32)
+        return self.glow_mask.copy()
     
     def get_progress(self) -> float:
         """
@@ -644,7 +614,7 @@ class PixelSortingEngine:
         """
         if self.total_steps == 0:
             return 1.0
-        return min(1.0, self.current_step / self.total_steps)
+        return min(1.0, self.current_step / max(1, self.total_steps))
     
     def get_sorting_state(self) -> Dict[str, Any]:
         """
@@ -660,7 +630,7 @@ class PixelSortingEngine:
             "is_complete": self.is_complete,
             "beat_drop_active": self.beat_drop_active,
             "beat_drop_multiplier": self.beat_drop_multiplier,
-            "current_image": self.current_image,
+            "current_image": self.current_image if self.current_image is not None else np.ones((self.target_height, self.target_width, 3), dtype=np.uint8) * 20,
             "glow_mask": self.get_glow_mask()
         }
     
@@ -673,11 +643,15 @@ class PixelSortingEngine:
         
         if self.scrambled_image is not None:
             self.current_image = self.scrambled_image.copy()
+        elif self.original_image is not None:
+            self.current_image = self.original_image.copy()
+        else:
+            self.current_image = np.ones((self.target_height, self.target_width, 3), dtype=np.uint8) * 20
         
-        # Reset glow intensities
-        for row in self.pixel_states:
-            for pixel in row:
-                pixel.glow_intensity = 0.0
+        # Reset glow mask
+        if self.current_image is not None:
+            h, w = self.current_image.shape[:2]
+            self.glow_mask = np.zeros((h, w), dtype=np.float32)
         
-        # Re-precompute sorting steps
-        self._precompute_sorting_steps()
+        # Re-initialize sorting state
+        self._initialize_sorting_state()

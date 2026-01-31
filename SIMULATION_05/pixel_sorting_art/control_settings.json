@@ -1,0 +1,18 @@
+{
+  "width": "1080",
+  "height": "1920",
+  "fps": "60",
+  "target_duration": "15.0",
+  "sorting_algorithm": "quick_sort",
+  "sort_direction": "horizontal",
+  "sort_criteria": "brightness",
+  "threshold": "0.3",
+  "color_style": "vaporwave",
+  "neon_glow_intensity": "0.8",
+  "beat_drop_time": "0.7",
+  "zoom_intensity": "1.5",
+  "motion_blur_strength": "0.4",
+  "auto_record": true,
+  "video_fps": "60",
+  "video_quality": "high"
+}
