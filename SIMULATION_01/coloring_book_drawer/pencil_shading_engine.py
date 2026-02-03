@@ -40,6 +40,40 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict
 import math
+import time
+
+# GPU acceleration - try to import CuPy for CUDA support
+HAS_GPU = False
+GPU_INFO = "No GPU acceleration"
+cp = None  # CuPy module placeholder
+
+try:
+    import cupy as cp_module
+    cp = cp_module
+    from cupyx.scipy import ndimage as cp_ndimage
+    
+    # Test GPU availability
+    try:
+        device = cp.cuda.Device(0)
+        cuda_version = cp.cuda.runtime.runtimeGetVersion()
+        cuda_major = cuda_version // 1000
+        cuda_minor = (cuda_version % 1000) // 10
+        
+        # Quick test
+        test_arr = cp.array([1, 2, 3])
+        _ = cp.asnumpy(test_arr)
+        
+        HAS_GPU = True
+        GPU_INFO = f"GPU: {device}, CUDA {cuda_major}.{cuda_minor}"
+        print(f"[PencilShadingEngine] GPU acceleration enabled: {GPU_INFO}")
+    except Exception as e:
+        print(f"[PencilShadingEngine] CuPy available but GPU init failed: {e}")
+        HAS_GPU = False
+        cp = None
+except ImportError:
+    print("[PencilShadingEngine] CuPy not installed. Using CPU processing.")
+    HAS_GPU = False
+    cp = None
 
 # Scikit-image for advanced processing
 try:
@@ -107,7 +141,9 @@ class PencilShadingEngine:
                  hatching_angle: float = 45.0,
                  cross_hatch_angle: float = -45.0,
                  stroke_spacing: int = 3,
-                 min_shade_threshold: int = 240):
+                 min_shade_threshold: int = 240,
+                 edge_phases_first: int = 1,
+                 shading_order: str = "top_to_bottom"):
         """
         Initialize the Pencil Shading Engine.
         
@@ -123,12 +159,26 @@ class PencilShadingEngine:
             cross_hatch_angle: Secondary hatching angle in degrees
             stroke_spacing: Spacing between hatching strokes in pixels
             min_shade_threshold: Pixel value below which is considered shaded (0-255)
+            edge_phases_first: Number of edge layers to complete before shading (1-3)
+                              1 = Main outlines first, then shading
+                              2 = Main outlines + hatching first, then remaining
+                              3 = Main outlines + hatching + cross-hatching first
+            shading_order: Order for shading strokes ("top_to_bottom", "natural", "random")
         """
         self.image_path = image_path
         self.target_width = target_width
         self.target_height = target_height
         self.padding = padding
-        self.use_gpu = use_gpu
+        self.use_gpu = use_gpu and HAS_GPU  # Only use GPU if available
+        
+        # Log GPU status
+        if self.use_gpu:
+            print(f"  [GPU] GPU acceleration ENABLED - {GPU_INFO}")
+        else:
+            if use_gpu and not HAS_GPU:
+                print("  [GPU] GPU requested but not available - using CPU")
+            else:
+                print("  [GPU] Using CPU processing")
         
         # Processing parameters
         self.edge_threshold = edge_threshold
@@ -137,6 +187,10 @@ class PencilShadingEngine:
         self.cross_hatch_angle = math.radians(cross_hatch_angle)
         self.stroke_spacing = stroke_spacing
         self.min_shade_threshold = min_shade_threshold
+        
+        # Phased drawing parameters
+        self.edge_phases_first = max(1, min(3, edge_phases_first))  # Clamp to 1-3
+        self.shading_order = shading_order  # "top_to_bottom", "natural", "random"
         
         # Image data
         self.original_image = None      # RGB original
@@ -387,7 +441,10 @@ class PencilShadingEngine:
             print("  No edges detected, skipping outline strokes.")
             return
         
-        # Extract skeleton from edge layer
+        # Extract skeleton from edge layer - this is the slow part
+        skeleton_start = time.time()
+        print("  Extracting skeleton (this may take a moment)...")
+        
         if HAS_SKIMAGE:
             skeleton, distance = medial_axis(self.edge_layer, return_distance=True)
             self.edge_skeleton = skeleton
@@ -402,8 +459,14 @@ class PencilShadingEngine:
             self.edge_skeleton = skeleton > 0
             self.edge_distance = distance * (skeleton > 0)
         
+        skeleton_elapsed = time.time() - skeleton_start
+        print(f"  Skeleton extraction completed in {skeleton_elapsed:.2f}s")
+        
         # Build ordered paths from skeleton
+        paths_start = time.time()
         paths = self._extract_ordered_paths(self.edge_skeleton, self.edge_distance)
+        paths_elapsed = time.time() - paths_start
+        print(f"  Path extraction completed in {paths_elapsed:.2f}s ({len(paths)} paths)")
         
         # Convert paths to stroke points
         for path in paths:
@@ -511,6 +574,108 @@ class PencilShadingEngine:
         Returns:
             List of stroke sequences, each containing StrokePoint objects
         """
+        # Use GPU-accelerated version if available
+        if self.use_gpu and cp is not None:
+            return self._generate_hatching_strokes_gpu(intensity_map, angle, spacing, min_intensity)
+        
+        return self._generate_hatching_strokes_cpu(intensity_map, angle, spacing, min_intensity)
+    
+    def _generate_hatching_strokes_gpu(self, intensity_map: np.ndarray,
+                                        angle: float, spacing: int,
+                                        min_intensity: float) -> List[List[StrokePoint]]:
+        """GPU-accelerated hatching stroke generation."""
+        start_time = time.time()
+        
+        h, w = intensity_map.shape
+        strokes = []
+        
+        # Transfer intensity map to GPU
+        intensity_gpu = cp.asarray(intensity_map)
+        
+        # Direction vectors for hatching
+        dx = math.cos(angle)
+        dy = math.sin(angle)
+        perp_dx = -dy
+        perp_dy = dx
+        
+        # Calculate line extent
+        diagonal = math.sqrt(w**2 + h**2)
+        num_lines = int(diagonal / spacing) + 1
+        start_offset = -diagonal / 2
+        
+        # Generate all line coordinates on GPU
+        t_values = cp.arange(-diagonal/2, diagonal/2, 1.5)
+        num_points_per_line = len(t_values)
+        
+        # Process lines in batches for memory efficiency
+        batch_size = 50
+        for batch_start in range(0, num_lines, batch_size):
+            batch_end = min(batch_start + batch_size, num_lines)
+            
+            for line_idx in range(batch_start, batch_end):
+                offset = start_offset + line_idx * spacing
+                cx = w / 2 + perp_dx * offset
+                cy = h / 2 + perp_dy * offset
+                
+                # Calculate coordinates for this line (on GPU)
+                x_coords = cx + dx * t_values
+                y_coords = cy + dy * t_values
+                
+                # Convert to integer indices
+                ix = cp.floor(x_coords).astype(cp.int32)
+                iy = cp.floor(y_coords).astype(cp.int32)
+                
+                # Create bounds mask
+                valid_mask = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
+                
+                # Get intensities for valid points
+                intensities = cp.zeros(num_points_per_line, dtype=cp.float32)
+                valid_indices = cp.where(valid_mask)[0]
+                
+                if len(valid_indices) > 0:
+                    valid_ix = ix[valid_mask]
+                    valid_iy = iy[valid_mask]
+                    intensities[valid_mask] = intensity_gpu[valid_iy, valid_ix]
+                
+                # Move results back to CPU for stroke creation
+                intensities_cpu = cp.asnumpy(intensities)
+                x_coords_cpu = cp.asnumpy(x_coords)
+                y_coords_cpu = cp.asnumpy(y_coords)
+                valid_mask_cpu = cp.asnumpy(valid_mask)
+                
+                # Build strokes from contiguous segments
+                stroke = []
+                for i in range(num_points_per_line):
+                    if valid_mask_cpu[i] and intensities_cpu[i] >= min_intensity:
+                        pressure = min(1.0, intensities_cpu[i] * 1.2)
+                        stroke_point = StrokePoint(
+                            x=float(x_coords_cpu[i]),
+                            y=float(y_coords_cpu[i]),
+                            pressure=pressure,
+                            angle=angle,
+                            width=1.5 + intensities_cpu[i] * 2.0,
+                            phase=DrawingPhase.HATCHING,
+                            intensity=float(intensities_cpu[i])
+                        )
+                        stroke.append(stroke_point)
+                    elif stroke:
+                        if len(stroke) > 2:
+                            strokes.append(stroke)
+                        stroke = []
+                
+                if len(stroke) > 2:
+                    strokes.append(stroke)
+        
+        elapsed = time.time() - start_time
+        print(f"    [GPU] Hatching generation: {elapsed:.2f}s")
+        
+        return strokes
+    
+    def _generate_hatching_strokes_cpu(self, intensity_map: np.ndarray,
+                                        angle: float, spacing: int,
+                                        min_intensity: float) -> List[List[StrokePoint]]:
+        """CPU-based hatching stroke generation (original implementation)."""
+        start_time = time.time()
         h, w = intensity_map.shape
         strokes = []
         
@@ -569,6 +734,9 @@ class PencilShadingEngine:
             # Add final stroke segment
             if len(stroke) > 2:
                 strokes.append(stroke)
+        
+        elapsed = time.time() - start_time
+        print(f"    [CPU] Hatching generation: {elapsed:.2f}s")
         
         return strokes
     
@@ -651,15 +819,111 @@ class PencilShadingEngine:
         return self._sort_paths_naturally(paths)
     
     def _sort_paths_naturally(self, paths: List) -> List:
-        """Sort paths for natural top-to-bottom, left-to-right drawing order."""
-        if not paths:
+        """
+        Sort paths for natural hand-drawn appearance.
+        
+        Instead of strict left-to-right typewriter order, uses:
+        1. Clustering nearby paths together
+        2. Random-but-logical ordering within regions  
+        3. Greedy nearest-neighbor for smooth transitions
+        """
+        if not paths or len(paths) <= 1:
             return paths
         
-        def path_sort_key(path):
-            y, x, _ = path[0]
-            return (y // 30, x)
+        import random
+        random.seed(42)  # Reproducible randomness
         
-        return sorted(paths, key=path_sort_key)
+        # Calculate centroid for each path
+        path_info = []
+        for i, path in enumerate(paths):
+            if len(path) > 0:
+                # Use first point as reference
+                y, x, _ = path[0]
+                # Also calculate endpoint
+                end_y, end_x, _ = path[-1]
+                path_info.append({
+                    'index': i,
+                    'path': path,
+                    'start_x': x,
+                    'start_y': y,
+                    'end_x': end_x,
+                    'end_y': end_y,
+                    'length': len(path)
+                })
+        
+        if not path_info:
+            return paths
+        
+        # Divide canvas into regions (grid-based clustering)
+        num_regions_x = 4
+        num_regions_y = 5
+        
+        # Get canvas bounds
+        all_x = [p['start_x'] for p in path_info]
+        all_y = [p['start_y'] for p in path_info]
+        min_x, max_x = min(all_x), max(all_x)
+        min_y, max_y = min(all_y), max(all_y)
+        
+        region_width = (max_x - min_x + 1) / num_regions_x
+        region_height = (max_y - min_y + 1) / num_regions_y
+        
+        # Assign paths to regions
+        regions = {}
+        for p in path_info:
+            rx = int((p['start_x'] - min_x) / max(1, region_width))
+            ry = int((p['start_y'] - min_y) / max(1, region_height))
+            rx = min(rx, num_regions_x - 1)
+            ry = min(ry, num_regions_y - 1)
+            
+            key = (ry, rx)  # Row-major order
+            if key not in regions:
+                regions[key] = []
+            regions[key].append(p)
+        
+        # Sort regions in a natural drawing pattern (spiral or serpentine)
+        sorted_region_keys = sorted(regions.keys(), key=lambda k: (k[0], k[1] if k[0] % 2 == 0 else -k[1]))
+        
+        # Build final ordered list using greedy nearest-neighbor within each region
+        sorted_paths = []
+        current_pos = (min_x, min_y)  # Start at top-left
+        
+        for region_key in sorted_region_keys:
+            region_paths = regions[region_key]
+            
+            # Shuffle slightly for natural variation (not strictly ordered)
+            random.shuffle(region_paths)
+            
+            # Use nearest-neighbor within region
+            remaining = region_paths.copy()
+            while remaining:
+                # Find path starting closest to current position
+                best_idx = 0
+                best_dist = float('inf')
+                
+                for i, p in enumerate(remaining):
+                    dist = math.sqrt((p['start_x'] - current_pos[0])**2 + 
+                                    (p['start_y'] - current_pos[1])**2)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_idx = i
+                
+                best_path = remaining.pop(best_idx)
+                sorted_paths.append(best_path['path'])
+                current_pos = (best_path['end_x'], best_path['end_y'])
+        
+        return sorted_paths
+    
+    def _add_pen_lift_markers(self, stroke_sequences: Dict[DrawingPhase, List[StrokePoint]]) -> Dict[DrawingPhase, List[StrokePoint]]:
+        """
+        Add pen-lift markers between discontinuous strokes to prevent
+        drawing lines across when pen moves to a new location.
+        
+        This is handled during reveal by checking distance between consecutive points.
+        """
+        # The actual pen-lift is handled in reveal_next_batch by checking
+        # if the distance between consecutive points is too large
+        # This method ensures the stroke sequences are properly segmented
+        return stroke_sequences
     
     def _morphological_skeleton(self, binary: np.ndarray) -> np.ndarray:
         """Fallback skeletonization using morphological operations."""
@@ -679,23 +943,76 @@ class PencilShadingEngine:
         return skeleton
     
     def _merge_sequences(self):
-        """Merge all stroke sequences into a single reveal sequence with natural ordering."""
-        # Order of phases for natural drawing
-        phase_order = [
+        """
+        Merge all stroke sequences into a single reveal sequence.
+        
+        The ordering strategy is:
+        1. Complete edge phases first (based on edge_phases_first setting)
+           - 1: Just OUTLINE first
+           - 2: OUTLINE + HATCHING first
+           - 3: OUTLINE + HATCHING + CROSS_HATCHING first
+        2. Then remaining phases are added in top-to-bottom order (based on shading_order)
+        
+        This creates a natural drawing effect where the artist first draws
+        all the main outlines/structure, then fills in shading.
+        """
+        print(f"\n  Merging sequences (edge_phases_first={self.edge_phases_first}, shading_order={self.shading_order})")
+        
+        # Define which phases are "edge" phases vs "shading" phases
+        edge_phases = [DrawingPhase.OUTLINE]
+        if self.edge_phases_first >= 2:
+            edge_phases.append(DrawingPhase.HATCHING)
+        if self.edge_phases_first >= 3:
+            edge_phases.append(DrawingPhase.CROSS_HATCHING)
+        
+        # All other phases are shading phases
+        all_phases = [
             DrawingPhase.OUTLINE,
             DrawingPhase.HATCHING,
             DrawingPhase.CROSS_HATCHING,
             DrawingPhase.DETAIL_SHADING,
         ]
+        shading_phases = [p for p in all_phases if p not in edge_phases]
         
         self.reveal_sequence = []
         
-        for phase in phase_order:
+        # PART 1: Add edge phases first (with natural sorting already applied)
+        for phase in edge_phases:
             strokes = self.stroke_sequences[phase]
             if strokes:
+                print(f"    Adding {len(strokes)} points for edge phase: {phase.name}")
                 self.reveal_sequence.extend(strokes)
         
+        edge_count = len(self.reveal_sequence)
+        print(f"    Total edge points: {edge_count}")
+        
+        # PART 2: Add shading phases in configured order
+        shading_strokes = []
+        for phase in shading_phases:
+            strokes = self.stroke_sequences[phase]
+            if strokes:
+                shading_strokes.extend(strokes)
+        
+        if shading_strokes:
+            # Sort shading strokes based on shading_order
+            if self.shading_order == "top_to_bottom":
+                # Sort by Y position (top to bottom), then X (left to right)
+                shading_strokes.sort(key=lambda p: (p.y, p.x))
+                print(f"    Sorting {len(shading_strokes)} shading points: top-to-bottom")
+            elif self.shading_order == "random":
+                # Shuffle for random order (good for some effects)
+                import random
+                random.shuffle(shading_strokes)
+                print(f"    Sorting {len(shading_strokes)} shading points: random")
+            else:
+                # "natural" - keep as-is (already sorted by _sort_paths_naturally)
+                print(f"    Keeping {len(shading_strokes)} shading points in natural order")
+            
+            self.reveal_sequence.extend(shading_strokes)
+        
         print(f"  Total reveal sequence: {len(self.reveal_sequence)} points")
+        print(f"    - Edge phases: {edge_count} points (drawn first)")
+        print(f"    - Shading phases: {len(shading_strokes)} points (drawn after edges)")
     
     def _init_animation_state(self):
         """Initialize the animation state."""
@@ -785,10 +1102,16 @@ class PencilShadingEngine:
         self._draw_soft_circle(x, y, radius, opacity, point.intensity)
         
         # Interpolate between points for smooth strokes
+        # BUT only if the distance is reasonable (pen is not "lifted")
         if prev_point is not None:
             dist = math.sqrt((point.x - prev_point.x)**2 + (point.y - prev_point.y)**2)
             
-            if dist > 1.5:
+            # PEN LIFT THRESHOLD: If distance is too large, don't interpolate
+            # This prevents drawing lines across when pen moves to a new location
+            pen_lift_threshold = 15.0  # pixels - if further than this, pen is "lifted"
+            
+            if dist > 1.5 and dist < pen_lift_threshold:
+                # Normal interpolation for continuous strokes
                 steps = int(dist / 1.0)
                 for step in range(1, steps):
                     t = step / steps

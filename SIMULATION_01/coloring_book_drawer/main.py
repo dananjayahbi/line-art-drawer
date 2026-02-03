@@ -189,7 +189,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                  custom_pen_path=None, pen_tip_x=0, pen_tip_y=0, 
                  pen_scale=1.0, pen_rotation=True,
                  force_shading_engine=False, shading_sensitivity=0.5,
-                 hatching_angle=45.0, stroke_spacing=3):
+                 hatching_angle=45.0, stroke_spacing=3,
+                 edge_phases_first=1, shading_order="top_to_bottom"):
         # FPS is now LOCKED at 60 for all simulations
         super().__init__(width, height, fps=60, title="Coloring Book Drawer")
         
@@ -208,6 +209,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.shading_sensitivity = shading_sensitivity
         self.hatching_angle = hatching_angle
         self.stroke_spacing = stroke_spacing
+        self.edge_phases_first = edge_phases_first
+        self.shading_order = shading_order
         self.using_shading_engine = False  # Will be set during setup
         
         # Pixel reveal engine (one of two engines will be used)
@@ -286,7 +289,9 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                         use_gpu=self.use_gpu,
                         shade_sensitivity=self.shading_sensitivity,
                         hatching_angle=self.hatching_angle,
-                        stroke_spacing=self.stroke_spacing
+                        stroke_spacing=self.stroke_spacing,
+                        edge_phases_first=self.edge_phases_first,
+                        shading_order=self.shading_order
                     )
                     
                     # Process with loading screen (for shading engine which is slow)
@@ -598,6 +603,11 @@ def main():
                         help="Primary hatching angle in degrees")
     parser.add_argument("--stroke-spacing", type=int, default=3,
                         help="Spacing between hatching strokes in pixels")
+    parser.add_argument("--edge-phases-first", type=int, default=1,
+                        help="Number of edge layers to complete before shading (1-3)")
+    parser.add_argument("--shading-order", type=str, default="top_to_bottom",
+                        choices=["top_to_bottom", "natural", "random"],
+                        help="Order for shading strokes after edges")
     
     args = parser.parse_args()
     
@@ -640,7 +650,9 @@ def main():
         force_shading_engine=args.force_shading,
         shading_sensitivity=args.shading_sensitivity,
         hatching_angle=args.hatching_angle,
-        stroke_spacing=args.stroke_spacing
+        stroke_spacing=args.stroke_spacing,
+        edge_phases_first=args.edge_phases_first,
+        shading_order=args.shading_order
     )
     
     sim.run()

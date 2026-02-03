@@ -86,6 +86,8 @@ class ControlPanel(QMainWindow):
         self.shading_sensitivity = 0.5
         self.hatching_angle = 45.0
         self.stroke_spacing = 3
+        self.edge_phases_first = 1  # Number of edge layers to complete before shading (1-3)
+        self.shading_order = "top_to_bottom"  # "top_to_bottom", "natural", "random"
         
         # Frame border settings
         self.frame_thickness = 6.0
@@ -152,6 +154,26 @@ class ControlPanel(QMainWindow):
         self.shading_sensitivity = float(settings.get("shading_sensitivity", 0.5))
         self.hatching_angle = float(settings.get("hatching_angle", 45.0))
         self.stroke_spacing = int(settings.get("stroke_spacing", 3))
+        self.edge_phases_first = int(settings.get("edge_phases_first", 1))
+        self.shading_order = settings.get("shading_order", "top_to_bottom")
+    
+    def _get_shading_order_display(self) -> str:
+        """Convert internal shading order value to display text."""
+        order_map = {
+            "top_to_bottom": "Top to Bottom",
+            "natural": "Natural",
+            "random": "Random"
+        }
+        return order_map.get(self.shading_order, "Top to Bottom")
+    
+    def _get_shading_order_value(self, display_text: str) -> str:
+        """Convert display text to internal shading order value."""
+        order_map = {
+            "Top to Bottom": "top_to_bottom",
+            "Natural": "natural",
+            "Random": "random"
+        }
+        return order_map.get(display_text, "top_to_bottom")
     
     def _save_settings(self):
         """Save all settings to file."""
@@ -191,7 +213,9 @@ class ControlPanel(QMainWindow):
             "force_shading_engine": self.force_shading_toggle.isChecked(),
             "shading_sensitivity": str(self.shading_sensitivity_slider.value() / 10.0),
             "hatching_angle": str(self.hatching_angle_slider.value()),
-            "stroke_spacing": str(self.stroke_spacing_slider.value())
+            "stroke_spacing": str(self.stroke_spacing_slider.value()),
+            "edge_phases_first": str(self.edge_phases_slider.value()),
+            "shading_order": self._get_shading_order_value(self.shading_order_combo.currentText())
         }
         
         if self.settings_manager.save_settings(settings):
@@ -789,6 +813,59 @@ class ControlPanel(QMainWindow):
         spacing_layout.addWidget(self.stroke_spacing_slider)
         group_layout.addLayout(spacing_layout)
         
+        # Separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("QFrame { color: #3d3d3d; }")
+        group_layout.addWidget(separator)
+        
+        # Edge Phases First (number of edge layers to complete before shading)
+        edge_phases_layout = QVBoxLayout()
+        edge_phases_layout.setSpacing(5)
+        
+        edge_phases_header = QHBoxLayout()
+        edge_phases_label = QLabel("Edge Phases First:")
+        edge_phases_label.setToolTip(
+            "Number of edge/outline layers to complete before shading:\n"
+            "1 = Draw main outlines first, then shading\n"
+            "2 = Draw outlines + hatching first, then remaining\n"
+            "3 = Draw outlines + hatching + cross-hatching first"
+        )
+        self.edge_phases_value_label = QLabel(f"{self.edge_phases_first}")
+        self.edge_phases_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
+        edge_phases_header.addWidget(edge_phases_label)
+        edge_phases_header.addStretch()
+        edge_phases_header.addWidget(self.edge_phases_value_label)
+        edge_phases_layout.addLayout(edge_phases_header)
+        
+        self.edge_phases_slider = QSlider(Qt.Orientation.Horizontal)
+        self.edge_phases_slider.setMinimum(1)
+        self.edge_phases_slider.setMaximum(3)
+        self.edge_phases_slider.setValue(self.edge_phases_first)
+        self.edge_phases_slider.valueChanged.connect(
+            lambda v: self.edge_phases_value_label.setText(f"{v}")
+        )
+        edge_phases_layout.addWidget(self.edge_phases_slider)
+        group_layout.addLayout(edge_phases_layout)
+        
+        # Shading Order dropdown
+        shading_order_layout = QHBoxLayout()
+        shading_order_label = QLabel("Shading Order:")
+        shading_order_label.setToolTip(
+            "How shading strokes are ordered after edges:\n"
+            "• Top to Bottom: Shade from top of image to bottom\n"
+            "• Natural: Keep stroke paths as generated\n"
+            "• Random: Randomize shading order"
+        )
+        self.shading_order_combo = QComboBox()
+        self.shading_order_combo.addItems(["Top to Bottom", "Natural", "Random"])
+        self.shading_order_combo.setCurrentText(self._get_shading_order_display())
+        self.shading_order_combo.setMinimumWidth(120)
+        shading_order_layout.addWidget(shading_order_label)
+        shading_order_layout.addStretch()
+        shading_order_layout.addWidget(self.shading_order_combo)
+        group_layout.addLayout(shading_order_layout)
+        
         layout.addWidget(group)
     
     def _create_custom_pen_settings(self, layout):
@@ -1350,6 +1427,8 @@ class ControlPanel(QMainWindow):
         self.shading_sensitivity_slider.setValue(int(self.shading_sensitivity * 10))
         self.hatching_angle_slider.setValue(int(self.hatching_angle))
         self.stroke_spacing_slider.setValue(self.stroke_spacing)
+        self.edge_phases_slider.setValue(self.edge_phases_first)
+        self.shading_order_combo.setCurrentText(self._get_shading_order_display())
         
         # Update pen status label and preview
         print(f"DEBUG _update_ui_from_settings: use_custom_pen={self.use_custom_pen}, custom_pen_path='{self.custom_pen_path}'")
@@ -1457,11 +1536,15 @@ class ControlPanel(QMainWindow):
         shading_sensitivity = self.shading_sensitivity_slider.value() / 10.0
         hatching_angle = self.hatching_angle_slider.value()
         stroke_spacing = self.stroke_spacing_slider.value()
+        edge_phases_first = self.edge_phases_slider.value()
+        shading_order = self._get_shading_order_value(self.shading_order_combo.currentText())
         
         cmd.extend([
             "--shading-sensitivity", str(shading_sensitivity),
             "--hatching-angle", str(hatching_angle),
-            "--stroke-spacing", str(stroke_spacing)
+            "--stroke-spacing", str(stroke_spacing),
+            "--edge-phases-first", str(edge_phases_first),
+            "--shading-order", shading_order
         ])
         
         # Launch in thread
