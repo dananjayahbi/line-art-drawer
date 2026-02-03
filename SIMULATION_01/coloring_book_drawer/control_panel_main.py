@@ -1051,6 +1051,28 @@ class ControlPanel(QMainWindow):
         )
         margin_layout.addWidget(self.frame_margin_slider)
         
+        # Adjust Frame button - opens interactive preview window
+        adjust_frame_btn = QPushButton("🖼️ Adjust Frame Interactively...")
+        adjust_frame_btn.setToolTip("Open a preview window to adjust frame margin with UP/DOWN arrow keys")
+        adjust_frame_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4a6572;
+                color: white;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #5a7582;
+            }
+            QPushButton:pressed {
+                background-color: #3a5562;
+            }
+        """)
+        adjust_frame_btn.clicked.connect(self._open_frame_adjuster)
+        margin_layout.addWidget(adjust_frame_btn)
+        
         group_layout.addLayout(margin_layout)
         
         layout.addWidget(group)
@@ -1329,6 +1351,65 @@ class ControlPanel(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open folder: {e}")
     
+    def _open_frame_adjuster(self):
+        """Open interactive frame adjuster window."""
+        # Get current image path from the upload widget
+        image_path = self.image_upload_widget.get_image_path()
+        if not image_path:
+            QMessageBox.warning(
+                self,
+                "No Image",
+                "Please upload an image first before adjusting the frame."
+            )
+            return
+        
+        try:
+            # Import the frame adjuster
+            from frame_adjuster import adjust_frame_margin
+            
+            # Get current margin value
+            current_margin = self.frame_margin_slider.value()
+            
+            # Get window dimensions from the input fields
+            try:
+                width = int(self.width_input.text())
+                height = int(self.height_input.text())
+            except (ValueError, AttributeError):
+                width = self.width
+                height = self.height
+            
+            # Open the adjuster window (blocks until user confirms or cancels)
+            self._update_status("Opening frame adjuster... Use UP/DOWN to adjust, Enter to confirm")
+            
+            new_margin = adjust_frame_margin(
+                image_path=image_path,
+                width=width,
+                height=height,
+                initial_margin=current_margin
+            )
+            
+            if new_margin is not None:
+                # User confirmed - update the slider
+                self.frame_margin_slider.setValue(int(new_margin))
+                self.frame_margin_value_label.setText(f"{int(new_margin)}px")
+                self._update_status(f"Frame margin set to {int(new_margin)}px")
+            else:
+                # User cancelled
+                self._update_status("Frame adjustment cancelled")
+                
+        except ImportError as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Could not import frame adjuster module: {e}"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open frame adjuster: {e}"
+            )
+
     def _generate_video(self):
         """Generate video from frames."""
         frames = list(FRAMES_FOLDER.glob("frame_*.png"))
