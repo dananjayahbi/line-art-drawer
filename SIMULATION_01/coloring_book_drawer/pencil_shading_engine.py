@@ -180,24 +180,32 @@ class PencilShadingEngine:
         self.brush_softness = 0.6       # How soft the brush edges are (0=hard, 1=very soft)
         self.pencil_texture_enabled = True
         
-    def process_image(self) -> bool:
+    def process_image(self, progress_callback=None) -> bool:
         """
         Main processing pipeline for the image.
+        
+        Args:
+            progress_callback: Optional callback function(step: int, name: str) for progress updates
         
         Returns:
             True if processing succeeded, False otherwise
         """
+        def update_progress(step: int, name: str):
+            print(f"\n[{step}/6] {name}")
+            if progress_callback:
+                progress_callback(step, name)
+        
         print("=" * 60)
         print("PENCIL SHADING ENGINE - Processing Image")
         print("=" * 60)
         
         # Step 1: Load and preprocess image
-        print("\n[1/6] Loading and preprocessing image...")
+        update_progress(1, "Loading and preprocessing image...")
         if not self._load_and_preprocess():
             return False
         
         # Step 2: Analyze image complexity
-        print("\n[2/6] Analyzing image complexity...")
+        update_progress(2, "Analyzing image complexity...")
         complexity = self._analyze_complexity()
         print(f"  Image complexity: {complexity['type']}")
         print(f"  - Edge coverage: {complexity['edge_coverage']:.1%}")
@@ -205,20 +213,20 @@ class PencilShadingEngine:
         print(f"  - Gradient regions: {complexity['gradient_regions']}")
         
         # Step 3: Decompose into layers
-        print("\n[3/6] Decomposing image into drawing layers...")
+        update_progress(3, "Decomposing image into drawing layers...")
         self._decompose_layers()
         
         # Step 4: Build stroke sequences for each layer
-        print("\n[4/6] Building stroke sequences...")
+        update_progress(4, "Building stroke sequences...")
         self._build_outline_strokes()
         self._build_shading_strokes()
         
         # Step 5: Merge sequences with natural ordering
-        print("\n[5/6] Merging sequences with natural drawing order...")
+        update_progress(5, "Merging sequences with natural drawing order...")
         self._merge_sequences()
         
         # Step 6: Initialize animation state
-        print("\n[6/6] Initializing animation state...")
+        update_progress(6, "Initializing animation state...")
         self._init_animation_state()
         
         print("\n" + "=" * 60)

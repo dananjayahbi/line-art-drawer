@@ -52,6 +52,7 @@ from pixel_reveal_engine import PixelRevealEngine
 from pencil_shading_engine import PencilShadingEngine, DrawingPhase
 from pen_renderer import PenRenderer
 from frame_animator import FrameAnimator
+from loading_screen import LoadingScreen, BackgroundProcessor
 
 # GPU acceleration - try to import CuPy for CUDA support
 HAS_GPU = False
@@ -275,6 +276,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                 if engine_choice == "shading" or self.force_shading_engine:
                     print("\n🎨 Using PENCIL SHADING ENGINE (for complex artwork)")
                     self.using_shading_engine = True
+                    
+                    # Create engine instance
                     self.reveal_engine = PencilShadingEngine(
                         self.image_path,
                         self.width,
@@ -285,6 +288,10 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                         hatching_angle=self.hatching_angle,
                         stroke_spacing=self.stroke_spacing
                     )
+                    
+                    # Process with loading screen (for shading engine which is slow)
+                    self._process_with_loading_screen()
+                    
                 else:
                     print("\n✏️ Using PIXEL REVEAL ENGINE (for line art)")
                     self.using_shading_engine = False
@@ -295,8 +302,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                         padding=40,
                         use_gpu=self.use_gpu
                     )
-                
-                self.reveal_engine.process_image()
+                    # PixelRevealEngine is fast, no loading screen needed
+                    self.reveal_engine.process_image()
                 
                 # Adjust brush scale based on thickness setting (for PixelRevealEngine)
                 if not self.using_shading_engine:
@@ -310,6 +317,63 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                 print(f"Error processing image: {e}")
                 import traceback
                 traceback.print_exc()
+    
+    def _process_with_loading_screen(self):
+        """Process the image with a loading screen to prevent UI freeze."""
+        import threading
+        import time
+        
+        # Create loading screen
+        loading_screen = LoadingScreen(self.screen, self.width, self.height)
+        
+        # Flag for thread completion
+        processing_complete = False
+        processing_error = None
+        
+        # Define the processing function
+        def do_processing():
+            nonlocal processing_complete, processing_error
+            try:
+                # The progress callback will update the loading screen
+                def progress_callback(step, name):
+                    loading_screen.update_progress(step, name)
+                
+                self.reveal_engine.process_image(progress_callback)
+                processing_complete = True
+            except Exception as e:
+                processing_error = str(e)
+                import traceback
+                traceback.print_exc()
+        
+        # Start processing in background thread
+        processing_thread = threading.Thread(target=do_processing, daemon=True)
+        processing_thread.start()
+        
+        # Run loading screen loop
+        clock = pygame.time.Clock()
+        while not processing_complete and processing_error is None:
+            # Handle events to keep window responsive
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        pygame.quit()
+                        sys.exit()
+            
+            # Draw loading screen
+            loading_screen.draw()
+            
+            # Limit frame rate
+            clock.tick(30)
+        
+        # Wait for thread to finish
+        processing_thread.join(timeout=1.0)
+        
+        # Check for errors
+        if processing_error:
+            raise RuntimeError(f"Image processing failed: {processing_error}")
     
     def _analyze_and_select_engine(self):
         """
