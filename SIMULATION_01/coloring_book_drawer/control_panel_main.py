@@ -100,7 +100,6 @@ class ControlPanel(QMainWindow):
         self.pen_tip_x = 0
         self.pen_tip_y = 0
         self.pen_scale = 1.0
-        self.pen_rotation = True
         
         # Recording settings
         self.auto_record = False
@@ -144,7 +143,6 @@ class ControlPanel(QMainWindow):
                 print("DEBUG: Default pen not found")
         
         self.pen_scale = float(settings.get("pen_scale", 0.3))
-        self.pen_rotation = settings.get("pen_rotation", True)
         self.auto_record = settings.get("auto_record", False)
         self.video_fps = 60  # Always 60
         self.video_quality = settings.get("video_quality", "high")
@@ -205,7 +203,6 @@ class ControlPanel(QMainWindow):
             "use_custom_pen": self.custom_pen_toggle.isChecked(),
             "custom_pen_path": self.custom_pen_path if self.custom_pen_path else "",
             "pen_scale": str(self.pen_scale_slider.value() / 10.0),
-            "pen_rotation": self.pen_rotation_toggle.isChecked(),
             "auto_record": self.auto_record_toggle.isChecked(),
             "video_fps": "60",  # Always 60
             "video_quality": self.video_quality_combo.currentText(),
@@ -963,16 +960,6 @@ class ControlPanel(QMainWindow):
         
         group_layout.addLayout(scale_layout)
         
-        # Pen Rotation
-        rotation_layout = QHBoxLayout()
-        rotation_label = QLabel("Enable Pen Rotation (follows drawing direction)")
-        rotation_label.setWordWrap(True)
-        self.pen_rotation_toggle = ToggleSwitch()
-        self.pen_rotation_toggle.setChecked(self.pen_rotation)
-        rotation_layout.addWidget(rotation_label, 1)
-        rotation_layout.addWidget(self.pen_rotation_toggle)
-        group_layout.addLayout(rotation_layout)
-        
         layout.addWidget(group)
     
     def _create_frame_border_settings(self, layout):
@@ -1498,7 +1485,6 @@ class ControlPanel(QMainWindow):
         self.frame_margin_slider.setValue(int(self.frame_margin))
         self.custom_pen_toggle.setChecked(self.use_custom_pen)
         self.pen_scale_slider.setValue(int(self.pen_scale * 10))
-        self.pen_rotation_toggle.setChecked(self.pen_rotation)
         self.auto_record_toggle.setChecked(self.auto_record)
         # Note: video_fps is always 60, no UI control needed
         self.video_quality_combo.setCurrentText(self.video_quality)
@@ -1605,10 +1591,9 @@ class ControlPanel(QMainWindow):
                 "--custom-pen", self.custom_pen_path,
                 "--pen-tip-x", str(self.pen_tip_x),
                 "--pen-tip-y", str(self.pen_tip_y),
-                "--pen-scale", str(pen_scale)
+                "--pen-scale", str(pen_scale),
+                "--pen-rotation"  # Always enable pen rotation
             ])
-            if self.pen_rotation_toggle.isChecked():
-                cmd.append("--pen-rotation")
         
         # Shading engine settings
         if self.force_shading_toggle.isChecked():
