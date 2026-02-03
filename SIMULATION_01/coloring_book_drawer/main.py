@@ -49,6 +49,7 @@ sys.path.insert(0, str(BASE_DIR))
 
 # Import modularized components
 from pixel_reveal_engine import PixelRevealEngine
+from pencil_shading_engine import PencilShadingEngine, DrawingPhase
 from pen_renderer import PenRenderer
 from frame_animator import FrameAnimator
 
@@ -169,6 +170,12 @@ class ColoringBookDrawerSimulation(BaseSimulation):
     Main simulation using pixel-reveal approach.
     Progressively reveals the original image pixels for perfect reproduction.
     
+    ENHANCED: Now supports two rendering engines:
+    - PixelRevealEngine: For simple line drawings (fast, skeleton-based)
+    - PencilShadingEngine: For complex shaded artwork with textures/shadows
+    
+    The engine is auto-selected based on image complexity analysis.
+    
     NOTE: FPS is now locked at 60 for smooth rendering and recording.
     The 'speed' parameter controls animation speed independently.
     In target_duration mode, speed is auto-calculated to match the desired duration.
@@ -179,7 +186,9 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                  show_pen=True, auto_record=True, use_gpu=True,
                  frame_thickness=6, frame_speed=1.0, frame_margin=20,
                  custom_pen_path=None, pen_tip_x=0, pen_tip_y=0, 
-                 pen_scale=1.0, pen_rotation=True):
+                 pen_scale=1.0, pen_rotation=True,
+                 force_shading_engine=False, shading_sensitivity=0.5,
+                 hatching_angle=45.0, stroke_spacing=3):
         # FPS is now LOCKED at 60 for all simulations
         super().__init__(width, height, fps=60, title="Coloring Book Drawer")
         
@@ -193,7 +202,14 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.auto_record = auto_record
         self.use_gpu = use_gpu
         
-        # Pixel reveal engine
+        # Engine selection settings
+        self.force_shading_engine = force_shading_engine
+        self.shading_sensitivity = shading_sensitivity
+        self.hatching_angle = hatching_angle
+        self.stroke_spacing = stroke_spacing
+        self.using_shading_engine = False  # Will be set during setup
+        
+        # Pixel reveal engine (one of two engines will be used)
         self.reveal_engine = None
         
         # Pen renderer
@@ -253,17 +269,38 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         # Process image if provided
         if self.image_path:
             try:
-                self.reveal_engine = PixelRevealEngine(
-                    self.image_path, 
-                    self.width, 
-                    self.height,
-                    padding=40,
-                    use_gpu=self.use_gpu
-                )
+                # First, analyze image to determine which engine to use
+                engine_choice = self._analyze_and_select_engine()
+                
+                if engine_choice == "shading" or self.force_shading_engine:
+                    print("\n🎨 Using PENCIL SHADING ENGINE (for complex artwork)")
+                    self.using_shading_engine = True
+                    self.reveal_engine = PencilShadingEngine(
+                        self.image_path,
+                        self.width,
+                        self.height,
+                        padding=40,
+                        use_gpu=self.use_gpu,
+                        shade_sensitivity=self.shading_sensitivity,
+                        hatching_angle=self.hatching_angle,
+                        stroke_spacing=self.stroke_spacing
+                    )
+                else:
+                    print("\n✏️ Using PIXEL REVEAL ENGINE (for line art)")
+                    self.using_shading_engine = False
+                    self.reveal_engine = PixelRevealEngine(
+                        self.image_path, 
+                        self.width, 
+                        self.height,
+                        padding=40,
+                        use_gpu=self.use_gpu
+                    )
+                
                 self.reveal_engine.process_image()
                 
-                # Adjust brush scale based on thickness setting
-                self.reveal_engine.brush_scale = 1.1 + (self.thickness_scale * 0.3)
+                # Adjust brush scale based on thickness setting (for PixelRevealEngine)
+                if not self.using_shading_engine:
+                    self.reveal_engine.brush_scale = 1.1 + (self.thickness_scale * 0.3)
                 
                 # Auto-calculate speed if target_duration is set
                 if self.target_duration:
@@ -273,6 +310,58 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                 print(f"Error processing image: {e}")
                 import traceback
                 traceback.print_exc()
+    
+    def _analyze_and_select_engine(self):
+        """
+        Analyze the image to determine which rendering engine to use.
+        
+        Returns:
+            "simple" for line art (use PixelRevealEngine)
+            "shading" for complex artwork (use PencilShadingEngine)
+        """
+        # Quick analysis using OpenCV
+        img = cv2.imread(str(self.image_path))
+        if img is None:
+            return "simple"
+        
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Detect edges
+        edges = cv2.Canny(gray, 50, 150)
+        edge_coverage = np.mean(edges > 0)
+        
+        # Detect shading (non-white, non-edge pixels with gradient values)
+        # White is 255, so anything significantly darker is potential shading
+        dark_pixels = gray < 240
+        very_dark_pixels = gray < 200
+        
+        # Calculate local variance to detect gradients
+        kernel_size = 11
+        local_mean = cv2.blur(gray.astype(np.float32), (kernel_size, kernel_size))
+        local_sq_mean = cv2.blur((gray.astype(np.float32))**2, (kernel_size, kernel_size))
+        local_variance = local_sq_mean - local_mean**2
+        gradient_coverage = np.mean(local_variance > 50)
+        
+        # Calculate shading coverage (dark areas that aren't edges)
+        edge_dilated = cv2.dilate(edges, np.ones((5, 5), np.uint8), iterations=1)
+        shade_mask = dark_pixels & (edge_dilated == 0)
+        shade_coverage = np.mean(shade_mask)
+        
+        print(f"\n📊 Image Analysis:")
+        print(f"   Edge coverage: {100*edge_coverage:.1f}%")
+        print(f"   Shade coverage: {100*shade_coverage:.1f}%")
+        print(f"   Gradient regions: {100*gradient_coverage:.1f}%")
+        print(f"   Dark pixel coverage: {100*np.mean(very_dark_pixels):.1f}%")
+        
+        # Decision logic:
+        # - If shade coverage > 10% OR gradient coverage > 5%, use shading engine
+        # - Otherwise, use simple engine
+        if shade_coverage > 0.10 or gradient_coverage > 0.05:
+            print("   → Detected complex shading/textures")
+            return "shading"
+        else:
+            print("   → Detected simple line art")
+            return "simple"
     
     def _calculate_speed_for_duration(self):
         """Calculate the speed needed to complete animation in target_duration seconds."""
@@ -353,7 +442,13 @@ class ColoringBookDrawerSimulation(BaseSimulation):
             return
         
         # Calculate points to reveal this frame based on speed
-        points_per_frame = int(self.base_reveal_rate * self.speed)
+        if self.using_shading_engine:
+            # PencilShadingEngine uses phase-based speed
+            base_points = self.reveal_engine.get_points_per_update()
+            points_per_frame = int(base_points * self.speed)
+        else:
+            # PixelRevealEngine uses fixed base rate
+            points_per_frame = int(self.base_reveal_rate * self.speed)
         
         # Reveal next batch of pixels
         has_more = self.reveal_engine.reveal_next_batch(points_per_frame)
@@ -364,12 +459,18 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         
         # Update pen position (for visual feedback)
         if has_more and self.show_pen:
-            idx = min(self.reveal_engine.current_reveal_idx - 1, 
-                     len(self.reveal_engine.reveal_sequence) - 1)
-            if idx >= 0:
-                y, x, _ = self.reveal_engine.reveal_sequence[idx]
-                self.pen_pos = (int(x), int(y))
+            if self.using_shading_engine:
+                # PencilShadingEngine provides pen position directly
+                self.pen_pos = self.reveal_engine.get_current_pen_position()
                 self.pen_visible = True
+            else:
+                # PixelRevealEngine uses reveal sequence
+                idx = min(self.reveal_engine.current_reveal_idx - 1, 
+                         len(self.reveal_engine.reveal_sequence) - 1)
+                if idx >= 0:
+                    y, x, _ = self.reveal_engine.reveal_sequence[idx]
+                    self.pen_pos = (int(x), int(y))
+                    self.pen_visible = True
         else:
             self.pen_visible = False
     
@@ -424,6 +525,16 @@ def main():
     parser.add_argument("--pen-scale", type=float, default=1.0, help="Custom pen scale")
     parser.add_argument("--pen-rotation", action="store_true", help="Enable pen rotation")
     
+    # New shading engine options
+    parser.add_argument("--force-shading", action="store_true", 
+                        help="Force use of pencil shading engine (for complex artwork)")
+    parser.add_argument("--shading-sensitivity", type=float, default=0.5,
+                        help="Shading detection sensitivity (0.0-1.0)")
+    parser.add_argument("--hatching-angle", type=float, default=45.0,
+                        help="Primary hatching angle in degrees")
+    parser.add_argument("--stroke-spacing", type=int, default=3,
+                        help="Spacing between hatching strokes in pixels")
+    
     args = parser.parse_args()
     
     # Handle target duration mode
@@ -460,7 +571,12 @@ def main():
         pen_tip_x=args.pen_tip_x,
         pen_tip_y=args.pen_tip_y,
         pen_scale=args.pen_scale,
-        pen_rotation=args.pen_rotation
+        pen_rotation=args.pen_rotation,
+        # New shading engine options
+        force_shading_engine=args.force_shading,
+        shading_sensitivity=args.shading_sensitivity,
+        hatching_angle=args.hatching_angle,
+        stroke_spacing=args.stroke_spacing
     )
     
     sim.run()

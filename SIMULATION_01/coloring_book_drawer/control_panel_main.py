@@ -81,6 +81,12 @@ class ControlPanel(QMainWindow):
         # Visual settings
         self.show_pen = True
         
+        # Shading engine settings (for complex artwork)
+        self.force_shading_engine = False
+        self.shading_sensitivity = 0.5
+        self.hatching_angle = 45.0
+        self.stroke_spacing = 3
+        
         # Frame border settings
         self.frame_thickness = 6.0
         self.frame_speed = 1.0
@@ -140,6 +146,12 @@ class ControlPanel(QMainWindow):
         self.auto_record = settings.get("auto_record", False)
         self.video_fps = 60  # Always 60
         self.video_quality = settings.get("video_quality", "high")
+        
+        # Shading engine settings
+        self.force_shading_engine = settings.get("force_shading_engine", False)
+        self.shading_sensitivity = float(settings.get("shading_sensitivity", 0.5))
+        self.hatching_angle = float(settings.get("hatching_angle", 45.0))
+        self.stroke_spacing = int(settings.get("stroke_spacing", 3))
     
     def _save_settings(self):
         """Save all settings to file."""
@@ -174,7 +186,12 @@ class ControlPanel(QMainWindow):
             "pen_rotation": self.pen_rotation_toggle.isChecked(),
             "auto_record": self.auto_record_toggle.isChecked(),
             "video_fps": "60",  # Always 60
-            "video_quality": self.video_quality_combo.currentText()
+            "video_quality": self.video_quality_combo.currentText(),
+            # Shading engine settings
+            "force_shading_engine": self.force_shading_toggle.isChecked(),
+            "shading_sensitivity": str(self.shading_sensitivity_slider.value() / 10.0),
+            "hatching_angle": str(self.hatching_angle_slider.value()),
+            "stroke_spacing": str(self.stroke_spacing_slider.value())
         }
         
         if self.settings_manager.save_settings(settings):
@@ -671,6 +688,106 @@ class ControlPanel(QMainWindow):
         pen_layout.addStretch()
         pen_layout.addWidget(self.show_pen_toggle)
         group_layout.addLayout(pen_layout)
+        
+        layout.addWidget(group)
+        
+        # Add Shading Engine Settings section
+        self._create_shading_settings(layout)
+    
+    def _create_shading_settings(self, layout):
+        """Create shading engine settings section for complex artwork."""
+        group = QGroupBox("🎨 Shading Engine (For Complex Artwork)")
+        group_layout = QVBoxLayout(group)
+        group_layout.setSpacing(12)
+        
+        # Info label
+        info_label = QLabel("For images with textures, shadows, and gradients (not just line art)")
+        info_label.setStyleSheet("QLabel { color: #8b7355; font-size: 10px; font-style: italic; }")
+        info_label.setWordWrap(True)
+        group_layout.addWidget(info_label)
+        
+        # Force Shading Engine toggle
+        force_layout = QHBoxLayout()
+        force_label = QLabel("Force Shading Engine")
+        force_label.setToolTip("Always use advanced shading engine even for simple line art")
+        self.force_shading_toggle = ToggleSwitch()
+        self.force_shading_toggle.setChecked(self.force_shading_engine)
+        force_layout.addWidget(force_label)
+        force_layout.addStretch()
+        force_layout.addWidget(self.force_shading_toggle)
+        group_layout.addLayout(force_layout)
+        
+        # Shading Sensitivity
+        sensitivity_layout = QVBoxLayout()
+        sensitivity_layout.setSpacing(5)
+        
+        sensitivity_header = QHBoxLayout()
+        sensitivity_label = QLabel("Shading Sensitivity:")
+        sensitivity_label.setToolTip("How sensitive to detect shading regions (higher = more sensitive)")
+        self.shading_sensitivity_value_label = QLabel(f"{self.shading_sensitivity:.1f}")
+        self.shading_sensitivity_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
+        sensitivity_header.addWidget(sensitivity_label)
+        sensitivity_header.addStretch()
+        sensitivity_header.addWidget(self.shading_sensitivity_value_label)
+        sensitivity_layout.addLayout(sensitivity_header)
+        
+        self.shading_sensitivity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.shading_sensitivity_slider.setMinimum(1)
+        self.shading_sensitivity_slider.setMaximum(10)
+        self.shading_sensitivity_slider.setValue(int(self.shading_sensitivity * 10))
+        self.shading_sensitivity_slider.valueChanged.connect(
+            lambda v: self.shading_sensitivity_value_label.setText(f"{v/10:.1f}")
+        )
+        sensitivity_layout.addWidget(self.shading_sensitivity_slider)
+        group_layout.addLayout(sensitivity_layout)
+        
+        # Hatching Angle
+        angle_layout = QVBoxLayout()
+        angle_layout.setSpacing(5)
+        
+        angle_header = QHBoxLayout()
+        angle_label = QLabel("Hatching Angle:")
+        angle_label.setToolTip("Primary angle for shading strokes (in degrees)")
+        self.hatching_angle_value_label = QLabel(f"{int(self.hatching_angle)}°")
+        self.hatching_angle_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
+        angle_header.addWidget(angle_label)
+        angle_header.addStretch()
+        angle_header.addWidget(self.hatching_angle_value_label)
+        angle_layout.addLayout(angle_header)
+        
+        self.hatching_angle_slider = QSlider(Qt.Orientation.Horizontal)
+        self.hatching_angle_slider.setMinimum(0)
+        self.hatching_angle_slider.setMaximum(90)
+        self.hatching_angle_slider.setValue(int(self.hatching_angle))
+        self.hatching_angle_slider.valueChanged.connect(
+            lambda v: self.hatching_angle_value_label.setText(f"{v}°")
+        )
+        angle_layout.addWidget(self.hatching_angle_slider)
+        group_layout.addLayout(angle_layout)
+        
+        # Stroke Spacing
+        spacing_layout = QVBoxLayout()
+        spacing_layout.setSpacing(5)
+        
+        spacing_header = QHBoxLayout()
+        spacing_label = QLabel("Stroke Spacing:")
+        spacing_label.setToolTip("Spacing between hatching strokes in pixels (smaller = denser)")
+        self.stroke_spacing_value_label = QLabel(f"{self.stroke_spacing}px")
+        self.stroke_spacing_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
+        spacing_header.addWidget(spacing_label)
+        spacing_header.addStretch()
+        spacing_header.addWidget(self.stroke_spacing_value_label)
+        spacing_layout.addLayout(spacing_header)
+        
+        self.stroke_spacing_slider = QSlider(Qt.Orientation.Horizontal)
+        self.stroke_spacing_slider.setMinimum(1)
+        self.stroke_spacing_slider.setMaximum(10)
+        self.stroke_spacing_slider.setValue(self.stroke_spacing)
+        self.stroke_spacing_slider.valueChanged.connect(
+            lambda v: self.stroke_spacing_value_label.setText(f"{v}px")
+        )
+        spacing_layout.addWidget(self.stroke_spacing_slider)
+        group_layout.addLayout(spacing_layout)
         
         layout.addWidget(group)
     
@@ -1228,6 +1345,12 @@ class ControlPanel(QMainWindow):
         # Note: video_fps is always 60, no UI control needed
         self.video_quality_combo.setCurrentText(self.video_quality)
         
+        # Shading engine settings
+        self.force_shading_toggle.setChecked(self.force_shading_engine)
+        self.shading_sensitivity_slider.setValue(int(self.shading_sensitivity * 10))
+        self.hatching_angle_slider.setValue(int(self.hatching_angle))
+        self.stroke_spacing_slider.setValue(self.stroke_spacing)
+        
         # Update pen status label and preview
         print(f"DEBUG _update_ui_from_settings: use_custom_pen={self.use_custom_pen}, custom_pen_path='{self.custom_pen_path}'")
         if self.use_custom_pen and self.custom_pen_path:
@@ -1326,6 +1449,20 @@ class ControlPanel(QMainWindow):
             ])
             if self.pen_rotation_toggle.isChecked():
                 cmd.append("--pen-rotation")
+        
+        # Shading engine settings
+        if self.force_shading_toggle.isChecked():
+            cmd.append("--force-shading")
+        
+        shading_sensitivity = self.shading_sensitivity_slider.value() / 10.0
+        hatching_angle = self.hatching_angle_slider.value()
+        stroke_spacing = self.stroke_spacing_slider.value()
+        
+        cmd.extend([
+            "--shading-sensitivity", str(shading_sensitivity),
+            "--hatching-angle", str(hatching_angle),
+            "--stroke-spacing", str(stroke_spacing)
+        ])
         
         # Launch in thread
         def run_simulation():
