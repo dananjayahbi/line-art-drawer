@@ -273,13 +273,17 @@ class PencilShadingEngine:
         # Step 4: Build stroke sequences for each layer
         update_progress(4, "Building stroke sequences...")
         self._build_outline_strokes()
-        self._build_shading_strokes()
+        try:
+            self._build_shading_strokes()
+        except Exception as e:
+            print(f"  Warning: Shading stroke generation had an issue: {e}")
+            print("  Continuing with outline strokes only...")
         
         # Step 5: Merge sequences with natural ordering
         update_progress(5, "Merging sequences with natural drawing order...")
         self._merge_sequences()
         
-        # Step 6: Initialize animation state
+        # Step 6: Initialize animation state (ALWAYS do this)
         update_progress(6, "Initializing animation state...")
         self._init_animation_state()
         
@@ -542,10 +546,12 @@ class PencilShadingEngine:
         very_dark = np.where(self.shade_layer > 0.6, self.shade_layer, 0)
         
         if np.any(very_dark > 0):
+            # Use max(1, spacing-1) to prevent zero spacing
+            detail_spacing = max(1, self.stroke_spacing - 1)
             detail_strokes = self._generate_hatching_strokes(
                 very_dark,
                 angle=self.hatching_angle + math.radians(22.5),
-                spacing=self.stroke_spacing - 1,
+                spacing=detail_spacing,
                 min_intensity=0.6
             )
             
@@ -600,6 +606,11 @@ class PencilShadingEngine:
         
         # Calculate line extent
         diagonal = math.sqrt(w**2 + h**2)
+        
+        # Guard against zero spacing
+        if spacing <= 0:
+            spacing = 3  # Default to 3 pixels
+        
         num_lines = int(diagonal / spacing) + 1
         start_offset = -diagonal / 2
         
@@ -689,6 +700,10 @@ class PencilShadingEngine:
         
         # Calculate line extent
         diagonal = math.sqrt(w**2 + h**2)
+        
+        # Guard against zero spacing
+        if spacing <= 0:
+            spacing = 3  # Default to 3 pixels
         
         # Generate parallel lines
         num_lines = int(diagonal / spacing) + 1
