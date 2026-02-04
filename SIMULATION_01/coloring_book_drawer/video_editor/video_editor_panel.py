@@ -71,9 +71,10 @@ class MergeWorker(QObject):
 
 
 class VideoThumbnailWidget(QFrame):
-    """Widget displaying a video thumbnail with info."""
+    """Widget displaying a video thumbnail with info and delete button."""
     
     clicked = Signal(object)  # VideoInfo
+    delete_requested = Signal(object)  # VideoInfo
     
     def __init__(self, video_info: VideoInfo, parent=None):
         super().__init__(parent)
@@ -88,11 +89,16 @@ class VideoThumbnailWidget(QFrame):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
         
+        # Thumbnail container with delete button overlay
+        thumb_container = QWidget()
+        thumb_container.setFixedSize(160, 100)
+        
         # Thumbnail
-        self.thumb_label = QLabel()
+        self.thumb_label = QLabel(thumb_container)
         self.thumb_label.setAlignment(Qt.AlignCenter)
         self.thumb_label.setFixedSize(160, 100)
         self.thumb_label.setStyleSheet("background-color: #2d2d2d; border-radius: 4px;")
+        self.thumb_label.move(0, 0)
         
         if self.video_info.thumbnail_path and self.video_info.thumbnail_path.exists():
             pixmap = QPixmap(str(self.video_info.thumbnail_path))
@@ -106,7 +112,27 @@ class VideoThumbnailWidget(QFrame):
                 border-radius: 4px;
             """)
         
-        layout.addWidget(self.thumb_label)
+        # Delete button (top-right corner) with icon
+        self.delete_btn = QPushButton(thumb_container)
+        self.delete_btn.setFixedSize(22, 22)
+        self.delete_btn.setIcon(load_icon("delete"))
+        self.delete_btn.setIconSize(QSize(14, 14))
+        self.delete_btn.move(134, 4)
+        self.delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(200, 50, 50, 0.85);
+                border: none;
+                border-radius: 11px;
+            }
+            QPushButton:hover {
+                background-color: rgba(220, 60, 60, 1.0);
+            }
+        """)
+        self.delete_btn.setToolTip("Delete video")
+        self.delete_btn.clicked.connect(self._on_delete_clicked)
+        self.delete_btn.setCursor(Qt.PointingHandCursor)
+        
+        layout.addWidget(thumb_container)
         
         # Filename (truncated)
         name = self.video_info.filename
@@ -127,6 +153,10 @@ class VideoThumbnailWidget(QFrame):
         
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(180, 150)
+    
+    def _on_delete_clicked(self):
+        """Handle delete button click."""
+        self.delete_requested.emit(self.video_info)
     
     def _format_duration(self, seconds: float) -> str:
         minutes = int(seconds // 60)
@@ -802,6 +832,7 @@ class VideoEditorPanel(QMainWindow):
         for i, video_info in enumerate(videos):
             widget = VideoThumbnailWidget(video_info)
             widget.clicked.connect(self._on_video_selected)
+            widget.delete_requested.connect(self._on_video_delete_requested)
             
             row = i // cols
             col = i % cols
@@ -830,6 +861,7 @@ class VideoEditorPanel(QMainWindow):
         for i, video_info in enumerate(videos):
             widget = VideoThumbnailWidget(video_info)
             widget.clicked.connect(self._on_video_selected)
+            widget.delete_requested.connect(self._on_processed_video_delete_requested)
             
             row = i // cols
             col = i % cols
@@ -887,6 +919,119 @@ class VideoEditorPanel(QMainWindow):
         
         # Update merge button
         self._update_merge_button()
+    
+    def _on_video_delete_requested(self, video_info: VideoInfo):
+        """Handle delete request for an original video."""
+        self._delete_video(video_info, is_processed=False)
+    
+    def _on_processed_video_delete_requested(self, video_info: VideoInfo):
+        """Handle delete request for a processed video."""
+        self._delete_video(video_info, is_processed=True)
+    
+    def _delete_video(self, video_info: VideoInfo, is_processed: bool):
+        """Delete a video with confirmation."""
+        video_type = "processed" if is_processed else "original"
+        
+        # Confirmation dialog with styled message box
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Delete Video")
+        msg_box.setText(
+            f"Are you sure you want to delete this {video_type} video?\n\n"
+            f"{video_info.filename}\n\n"
+            f"This action cannot be undone."
+        )
+        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.No)
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #f0f0f0;
+            }
+            QMessageBox QLabel {
+                color: #1a1a1a;
+                font-size: 12px;
+            }
+            QPushButton {
+                background-color: #c85050;
+                color: white;
+                padding: 6px 16px;
+                border-radius: 4px;
+                min-width: 60px;
+            }
+            QPushButton:hover {
+                background-color: #a84040;
+            }
+        """)
+        
+        if msg_box.exec() != QMessageBox.Yes:
+            return
+        
+        # If this video is currently loaded, stop playback
+        if self.selected_video and self.selected_video.path == video_info.path:
+            self.video_player.stop()
+            self.selected_video = None
+            self.video_info_label.setText("No video selected")
+        
+        # Delete the video using the appropriate manager
+        manager = self.processed_video_manager if is_processed else self.video_manager
+        if manager.delete_video(video_info.path):
+            # Show success message
+            success_msg = QMessageBox(self)
+            success_msg.setWindowTitle("Video Deleted")
+            success_msg.setText(f"Video deleted successfully:\n\n{video_info.filename}")
+            success_msg.setIcon(QMessageBox.Information)
+            success_msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #f0f0f0;
+                }
+                QMessageBox QLabel {
+                    color: #1a1a1a;
+                    font-size: 12px;
+                }
+                QPushButton {
+                    background-color: #8fad88;
+                    color: white;
+                    padding: 6px 16px;
+                    border-radius: 4px;
+                    min-width: 60px;
+                }
+                QPushButton:hover {
+                    background-color: #7a9773;
+                }
+            """)
+            success_msg.exec()
+            
+            # Refresh the appropriate list
+            if is_processed:
+                self._refresh_processed()
+            else:
+                self._refresh_videos()
+            
+            # Update merge button
+            self._update_merge_button()
+        else:
+            # Show error message
+            error_msg = QMessageBox(self)
+            error_msg.setWindowTitle("Delete Failed")
+            error_msg.setText(f"Failed to delete video:\n\n{video_info.filename}")
+            error_msg.setIcon(QMessageBox.Critical)
+            error_msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #f0f0f0;
+                }
+                QMessageBox QLabel {
+                    color: #1a1a1a;
+                    font-size: 12px;
+                }
+                QPushButton {
+                    background-color: #c85050;
+                    color: white;
+                    padding: 6px 16px;
+                    border-radius: 4px;
+                    min-width: 60px;
+                }
+            """)
+            error_msg.exec()
     
     def _on_music_selected(self, music_info: MusicInfo):
         """Handle music selection."""
