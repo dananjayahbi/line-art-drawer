@@ -27,6 +27,7 @@ from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QIcon, QFont, QP
 from settings_manager import SettingsManager
 from custom_widgets import ToggleSwitch, ImageUploadWidget, PenTipConfigDialog, load_icon
 from video_thread import VideoGenerationThread
+from video_editor.video_editor_panel import VideoEditorPanel
 
 # Get paths
 SIMULATION_DIR = Path(__file__).resolve().parent
@@ -1178,6 +1179,27 @@ class ControlPanel(QMainWindow):
         
         btn_layout.addLayout(btn_row2)
         
+        # Row 3: Manage Videos button
+        btn_row3 = QHBoxLayout()
+        btn_row3.setSpacing(8)
+        
+        manage_videos_btn = QPushButton("🎬 Manage Videos")
+        manage_videos_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6b8fa8;
+                color: white;
+                border-radius: 6px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background-color: #5a7d94;
+            }
+        """)
+        manage_videos_btn.clicked.connect(self._open_video_editor)
+        btn_row3.addWidget(manage_videos_btn)
+        
+        btn_layout.addLayout(btn_row3)
+        
         group_layout.addLayout(btn_layout, 1)
         
         layout.addWidget(group)
@@ -1337,6 +1359,14 @@ class ControlPanel(QMainWindow):
                 subprocess.run(['xdg-open', str(FRAMES_FOLDER)])
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open folder: {e}")
+    
+    def _open_video_editor(self):
+        """Open the video editor panel for adding background music."""
+        try:
+            self.video_editor_window = VideoEditorPanel(self)
+            self.video_editor_window.show()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open video editor: {e}")
     
     def _open_frame_adjuster(self):
         """Open interactive frame adjuster window."""
