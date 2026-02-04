@@ -2,10 +2,14 @@
 Video Player Widget Module
 ===========================
 Custom video player widget using PySide6 and OpenCV for video playback.
+Supports audio playback using pygame for videos with embedded audio.
 """
 
 import cv2
 import numpy as np
+import subprocess
+import tempfile
+import os
 from pathlib import Path
 from typing import Optional, Callable
 
@@ -15,6 +19,14 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QSize
 from PySide6.QtGui import QImage, QPixmap, QIcon
+
+# Try to import pygame for audio playback
+try:
+    import pygame
+    pygame.mixer.init()
+    PYGAME_AVAILABLE = True
+except ImportError:
+    PYGAME_AVAILABLE = False
 
 
 # Get icons path
@@ -30,7 +42,7 @@ def load_icon(name: str) -> QIcon:
 
 
 class VideoPlayerWidget(QWidget):
-    """Custom video player widget with playback controls."""
+    """Custom video player widget with playback controls and audio support."""
     
     # Signals
     playback_started = Signal()
@@ -43,12 +55,15 @@ class VideoPlayerWidget(QWidget):
         super().__init__(parent)
         
         self.video_path: Optional[Path] = None
+        self.audio_path: Optional[Path] = None  # Extracted audio temp file
         self.cap: Optional[cv2.VideoCapture] = None
         self.is_playing = False
         self.current_frame = 0
         self.total_frames = 0
         self.fps = 30.0
         self.duration = 0.0
+        self.has_audio = False
+        self._audio_start_frame = 0  # Frame when audio started (for sync)
         
         self._setup_ui()
         
@@ -214,6 +229,9 @@ class VideoPlayerWidget(QWidget):
         # Stop current playback
         self.stop()
         
+        # Clean up previous audio
+        self._cleanup_audio()
+        
         # Release previous capture
         if self.cap is not None:
             self.cap.release()
@@ -229,6 +247,9 @@ class VideoPlayerWidget(QWidget):
             self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
             self.duration = self.total_frames / self.fps
             self.current_frame = 0
+            
+            # Try to extract audio
+            self._extract_audio(video_path)
             
             # Update duration label
             self.duration_label.setText(self._format_time(self.duration))
@@ -252,6 +273,81 @@ class VideoPlayerWidget(QWidget):
             print(f"Error loading video: {e}")
             self._show_placeholder()
             return False
+    
+    def _extract_audio(self, video_path: Path):
+        """Extract audio from video using FFmpeg for playback."""
+        if not PYGAME_AVAILABLE:
+            self.has_audio = False
+            return
+        
+        try:
+            import shutil
+            ffmpeg = shutil.which('ffmpeg')
+            if not ffmpeg:
+                # Try common paths
+                common_paths = [
+                    r"C:\ffmpeg\bin\ffmpeg.exe",
+                    r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+                ]
+                for path in common_paths:
+                    if os.path.exists(path):
+                        ffmpeg = path
+                        break
+            
+            if not ffmpeg:
+                self.has_audio = False
+                return
+            
+            # Create temp file for audio
+            self.audio_path = Path(tempfile.gettempdir()) / f"video_audio_{os.getpid()}.mp3"
+            
+            # Extract audio using FFmpeg
+            cmd = [
+                ffmpeg,
+                '-y',  # Overwrite
+                '-i', str(video_path),
+                '-vn',  # No video
+                '-acodec', 'libmp3lame',
+                '-ar', '44100',
+                '-ab', '128k',
+                str(self.audio_path)
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            
+            if result.returncode == 0 and self.audio_path.exists() and self.audio_path.stat().st_size > 0:
+                self.has_audio = True
+            else:
+                self.has_audio = False
+                if self.audio_path and self.audio_path.exists():
+                    self.audio_path.unlink()
+                    self.audio_path = None
+                    
+        except Exception as e:
+            print(f"Error extracting audio: {e}")
+            self.has_audio = False
+            self.audio_path = None
+    
+    def _cleanup_audio(self):
+        """Clean up temporary audio file."""
+        if PYGAME_AVAILABLE:
+            try:
+                pygame.mixer.music.stop()
+            except:
+                pass
+        
+        if self.audio_path and self.audio_path.exists():
+            try:
+                self.audio_path.unlink()
+            except:
+                pass
+        self.audio_path = None
+        self.has_audio = False
     
     def _show_frame(self, frame_num: int):
         """Display a specific frame."""
@@ -334,12 +430,25 @@ class VideoPlayerWidget(QWidget):
             self.playback_finished.emit()
     
     def play(self):
-        """Start playback."""
+        """Start playback with audio sync."""
         if self.cap is None:
             return
         
         self.is_playing = True
         self.play_btn.setIcon(load_icon("pause"))
+        
+        # Start audio playback if available
+        if self.has_audio and PYGAME_AVAILABLE and self.audio_path:
+            try:
+                # Calculate current position in seconds
+                current_time = self.current_frame / self.fps
+                
+                # Load and play audio from current position
+                pygame.mixer.music.load(str(self.audio_path))
+                pygame.mixer.music.play(start=current_time)
+                self._audio_start_frame = self.current_frame
+            except Exception as e:
+                print(f"Error starting audio: {e}")
         
         # Calculate timer interval from fps
         interval = int(1000 / self.fps)
@@ -347,10 +456,18 @@ class VideoPlayerWidget(QWidget):
         self.playback_started.emit()
     
     def pause(self):
-        """Pause playback."""
+        """Pause playback including audio."""
         self.is_playing = False
         self.play_btn.setIcon(load_icon("play"))
         self.playback_timer.stop()
+        
+        # Pause audio
+        if self.has_audio and PYGAME_AVAILABLE:
+            try:
+                pygame.mixer.music.pause()
+            except:
+                pass
+        
         self.playback_paused.emit()
     
     def toggle_play(self):
@@ -362,7 +479,17 @@ class VideoPlayerWidget(QWidget):
     
     def stop(self):
         """Stop playback and reset to beginning."""
-        self.pause()
+        self.is_playing = False
+        self.play_btn.setIcon(load_icon("play"))
+        self.playback_timer.stop()
+        
+        # Stop audio
+        if self.has_audio and PYGAME_AVAILABLE:
+            try:
+                pygame.mixer.music.stop()
+            except:
+                pass
+        
         if self.cap is not None:
             self._show_frame(0)
         self.playback_stopped.emit()
@@ -372,8 +499,15 @@ class VideoPlayerWidget(QWidget):
         if self.cap is None:
             return
         
+        was_playing = self.is_playing
+        if was_playing:
+            self.pause()
+        
         new_frame = max(0, self.current_frame - int(5 * self.fps))
         self._show_frame(new_frame)
+        
+        if was_playing:
+            self.play()
     
     def seek(self, seconds: float):
         """
@@ -385,20 +519,41 @@ class VideoPlayerWidget(QWidget):
         if self.cap is None:
             return
         
+        was_playing = self.is_playing
+        if was_playing:
+            self.pause()
+        
         frame_num = int(seconds * self.fps)
         frame_num = max(0, min(frame_num, self.total_frames - 1))
         self._show_frame(frame_num)
+        
+        if was_playing:
+            self.play()
     
     def _on_slider_pressed(self):
         """Handle slider press."""
         # Pause playback while dragging
         if self.is_playing:
             self.playback_timer.stop()
+            if self.has_audio and PYGAME_AVAILABLE:
+                try:
+                    pygame.mixer.music.pause()
+                except:
+                    pass
     
     def _on_slider_released(self):
         """Handle slider release."""
-        # Resume playback if was playing
+        # Seek audio to new position and resume if was playing
         if self.is_playing:
+            # Restart audio from new position
+            if self.has_audio and PYGAME_AVAILABLE and self.audio_path:
+                try:
+                    current_time = self.current_frame / self.fps
+                    pygame.mixer.music.load(str(self.audio_path))
+                    pygame.mixer.music.play(start=current_time)
+                except:
+                    pass
+            
             interval = int(1000 / self.fps)
             self.playback_timer.start(interval)
     
@@ -428,6 +583,7 @@ class VideoPlayerWidget(QWidget):
     def cleanup(self):
         """Clean up resources."""
         self.stop()
+        self._cleanup_audio()
         if self.cap is not None:
             self.cap.release()
             self.cap = None

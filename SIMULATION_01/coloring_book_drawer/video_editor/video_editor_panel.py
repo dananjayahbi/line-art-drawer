@@ -951,17 +951,30 @@ class VideoEditorPanel(QMainWindow):
         if not self.music_manager.is_playing() or not self.current_playing_music:
             return
         
-        # Note: pygame mixer doesn't provide position info easily
-        # This is a simplified implementation
-        pass
+        # Get current position from pygame
+        position = self.music_manager.get_position()
+        duration = self.current_playing_music.duration
+        
+        if duration > 0 and not self.music_seek_slider.isSliderDown():
+            # Update slider (0-1000 range)
+            slider_value = int((position / duration) * 1000)
+            self.music_seek_slider.setValue(min(slider_value, 1000))
+            self.music_time_label.setText(self._format_time(position))
     
     def _on_music_seek_pressed(self):
         """Handle seek slider press."""
+        # Pause timer updates while user is dragging
         pass
     
     def _on_music_seek_released(self):
         """Handle seek slider release."""
-        pass
+        if self.current_playing_music:
+            # Get target position from slider
+            value = self.music_seek_slider.value()
+            position = (value / 1000) * self.current_playing_music.duration
+            
+            # Seek to position
+            self.music_manager.set_position(position)
     
     def _on_music_seek_moved(self, value: int):
         """Handle seek slider movement."""
@@ -1009,20 +1022,40 @@ class VideoEditorPanel(QMainWindow):
         # Stop music playback
         self._stop_music()
         
-        # Confirm
-        reply = QMessageBox.question(
-            self,
-            "Merge Video",
+        # Confirm with styled message box
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Merge Video")
+        msg_box.setText(
             f"Merge video:\n{self.selected_video.filename}\n\n"
             f"With music:\n{self.selected_music.display_name}\n\n"
             f"The music will be trimmed from the end to match the video length.\n"
             f"Audio will fade in/out at start and end.\n\n"
-            f"Continue?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes
+            f"Continue?"
         )
+        msg_box.setIcon(QMessageBox.Question)
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.Yes)
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #f0f0f0;
+            }
+            QMessageBox QLabel {
+                color: #1a1a1a;
+                font-size: 12px;
+            }
+            QPushButton {
+                background-color: #8fad88;
+                color: white;
+                padding: 6px 16px;
+                border-radius: 4px;
+                min-width: 60px;
+            }
+            QPushButton:hover {
+                background-color: #7a9773;
+            }
+        """)
         
-        if reply != QMessageBox.Yes:
+        if msg_box.exec() != QMessageBox.Yes:
             return
         
         # Show progress
@@ -1054,24 +1087,50 @@ class VideoEditorPanel(QMainWindow):
         self.merge_btn.setText("  Merge Video with Music")
         self.merge_btn.setIcon(load_icon("merge"))
         
+        # Common message box style with black text
+        msg_style = """
+            QMessageBox {
+                background-color: #f0f0f0;
+            }
+            QMessageBox QLabel {
+                color: #1a1a1a;
+                font-size: 12px;
+            }
+            QPushButton {
+                background-color: #8fad88;
+                color: white;
+                padding: 6px 16px;
+                border-radius: 4px;
+                min-width: 60px;
+            }
+            QPushButton:hover {
+                background-color: #7a9773;
+            }
+        """
+        
         if result.success:
-            QMessageBox.information(
-                self,
-                "Merge Complete",
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Merge Complete")
+            msg_box.setText(
                 f"Video merged successfully!\n\n"
                 f"Saved to:\n{result.output_path}\n\n"
                 f"Processing time: {result.duration:.1f}s"
             )
+            msg_box.setIcon(QMessageBox.Information)
+            msg_box.setStyleSheet(msg_style)
+            msg_box.exec()
+            
             # Refresh processed tab
             self._refresh_processed()
             # Switch to processed tab
             self.video_tabs.setCurrentIndex(1)
         else:
-            QMessageBox.critical(
-                self,
-                "Merge Failed",
-                f"Failed to merge video:\n\n{result.error_message}"
-            )
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Merge Failed")
+            msg_box.setText(f"Failed to merge video:\n\n{result.error_message}")
+            msg_box.setIcon(QMessageBox.Critical)
+            msg_box.setStyleSheet(msg_style)
+            msg_box.exec()
     
     def closeEvent(self, event):
         """Clean up on window close."""

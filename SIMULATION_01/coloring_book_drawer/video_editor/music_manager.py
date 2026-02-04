@@ -243,6 +243,47 @@ class MusicManager:
         """Get the path of currently playing music."""
         return self._current_playing
     
+    def get_position(self) -> float:
+        """Get current playback position in seconds."""
+        if PYGAME_AVAILABLE:
+            try:
+                # pygame.mixer.music.get_pos() returns time in milliseconds
+                pos_ms = pygame.mixer.music.get_pos()
+                if pos_ms >= 0:
+                    return pos_ms / 1000.0
+            except:
+                pass
+        return 0.0
+    
+    def set_position(self, position: float) -> bool:
+        """
+        Set playback position in seconds.
+        
+        Note: This only works reliably for MP3 files.
+        For other formats, playback will restart from the beginning.
+        
+        Args:
+            position: Position in seconds from start
+            
+        Returns:
+            True if successful
+        """
+        if PYGAME_AVAILABLE and self._current_playing:
+            try:
+                # pygame.mixer.music.set_pos() sets position in seconds for MP3
+                pygame.mixer.music.set_pos(position)
+                return True
+            except Exception as e:
+                print(f"Error seeking music: {e}")
+                # Fallback: reload and play from position
+                try:
+                    pygame.mixer.music.load(str(self._current_playing))
+                    pygame.mixer.music.play(start=position)
+                    return True
+                except:
+                    pass
+        return False
+    
     def set_volume(self, volume: float):
         """
         Set playback volume.
