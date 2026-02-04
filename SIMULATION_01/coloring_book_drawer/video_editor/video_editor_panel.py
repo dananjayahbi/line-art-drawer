@@ -7,8 +7,8 @@ Layout:
 - Window divided vertically into 2 sections
 - Right side: Video player/preview
 - Left side: 
-  - Top half: Video thumbnails grid
-  - Bottom half: Music list with play controls
+  - Top half: Tabbed video thumbnails (Videos / Processed)
+  - Bottom half: Music list with play controls and seek slider
 """
 
 import os
@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSlider, QFrame, QScrollArea, QSplitter,
     QListWidget, QListWidgetItem, QMessageBox, QProgressDialog,
-    QSizePolicy, QGroupBox, QApplication
+    QSizePolicy, QGroupBox, QApplication, QTabWidget
 )
 from PySide6.QtCore import Qt, QSize, Signal, QTimer, QThread, QObject
 from PySide6.QtGui import QPixmap, QIcon, QFont, QColor
@@ -37,6 +37,15 @@ VIDEOS_DIR = BASE_DIR / "output" / "videos"
 THUMBNAILS_DIR = BASE_DIR / "output" / "thumbnails"
 PROCESSED_DIR = BASE_DIR / "output" / "processed"
 MUSIC_DIR = SIMULATION_DIR / "assets" / "background_music_library"
+ICONS_DIR = SIMULATION_DIR / "assets" / "icons"
+
+
+def load_icon(name: str) -> QIcon:
+    """Load an icon from the icons folder."""
+    icon_path = ICONS_DIR / f"{name}.svg"
+    if icon_path.exists():
+        return QIcon(str(icon_path))
+    return QIcon()
 
 
 class MergeWorker(QObject):
@@ -90,12 +99,11 @@ class VideoThumbnailWidget(QFrame):
             scaled = pixmap.scaled(160, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.thumb_label.setPixmap(scaled)
         else:
-            self.thumb_label.setText("🎬")
+            # Use movie icon
+            self.thumb_label.setPixmap(load_icon("movie").pixmap(48, 48))
             self.thumb_label.setStyleSheet("""
                 background-color: #2d2d2d; 
                 border-radius: 4px;
-                font-size: 32px;
-                color: #606060;
             """)
         
         layout.addWidget(self.thumb_label)
@@ -175,16 +183,17 @@ class MusicListItem(QWidget):
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(10)
         
-        # Play button
-        self.play_btn = QPushButton("▶")
+        # Play button with icon
+        self.play_btn = QPushButton()
         self.play_btn.setFixedSize(32, 32)
+        self.play_btn.setIcon(load_icon("play"))
+        self.play_btn.setIconSize(QSize(16, 16))
         self.play_btn.setStyleSheet("""
             QPushButton {
                 background-color: #404040;
                 color: white;
                 border: none;
                 border-radius: 16px;
-                font-size: 12px;
             }
             QPushButton:hover {
                 background-color: #505050;
@@ -193,16 +202,21 @@ class MusicListItem(QWidget):
         self.play_btn.clicked.connect(lambda: self.play_clicked.emit(self.music_info))
         layout.addWidget(self.play_btn)
         
-        # Name
+        # Music icon
+        music_icon_label = QLabel()
+        music_icon_label.setPixmap(load_icon("music").pixmap(16, 16))
+        layout.addWidget(music_icon_label)
+        
+        # Name - darker color for better visibility
         self.name_label = QLabel(self.music_info.display_name)
-        self.name_label.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        self.name_label.setStyleSheet("color: #1a1a1a; font-size: 12px; font-weight: 500;")
         self.name_label.setToolTip(self.music_info.filename)
         layout.addWidget(self.name_label, stretch=1)
         
         # Duration
         duration_str = self._format_duration(self.music_info.duration)
         self.duration_label = QLabel(duration_str)
-        self.duration_label.setStyleSheet("color: #909090; font-size: 11px;")
+        self.duration_label.setStyleSheet("color: #505050; font-size: 11px;")
         layout.addWidget(self.duration_label)
         
         self.setCursor(Qt.PointingHandCursor)
@@ -215,11 +229,11 @@ class MusicListItem(QWidget):
     
     def _update_style(self):
         if self.is_selected:
-            bg_color = "#3d5a3d"
+            bg_color = "#b8d4b0"  # Lighter green for selected
             border = "2px solid #8fad88"
         else:
-            bg_color = "#2a2a2a"
-            border = "1px solid #404040"
+            bg_color = "#d0d0d0"  # Light gray background for visibility
+            border = "1px solid #a0a0a0"
         
         self.setStyleSheet(f"""
             MusicListItem {{
@@ -235,28 +249,27 @@ class MusicListItem(QWidget):
     
     def set_playing(self, playing: bool):
         self.is_playing = playing
-        self.play_btn.setText("⏸" if playing else "▶")
         if playing:
+            self.play_btn.setIcon(load_icon("pause"))
             self.play_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #8fad88;
                     color: white;
                     border: none;
                     border-radius: 16px;
-                    font-size: 12px;
                 }
                 QPushButton:hover {
                     background-color: #7a9773;
                 }
             """)
         else:
+            self.play_btn.setIcon(load_icon("play"))
             self.play_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #404040;
                     color: white;
                     border: none;
                     border-radius: 16px;
-                    font-size: 12px;
                 }
                 QPushButton:hover {
                     background-color: #505050;
@@ -276,6 +289,7 @@ class VideoEditorPanel(QMainWindow):
         
         # Initialize managers
         self.video_manager = VideoManager(VIDEOS_DIR, THUMBNAILS_DIR)
+        self.processed_video_manager = VideoManager(PROCESSED_DIR, THUMBNAILS_DIR)
         self.music_manager = MusicManager(MUSIC_DIR)
         self.video_merger = VideoMerger(PROCESSED_DIR)
         
@@ -283,10 +297,16 @@ class VideoEditorPanel(QMainWindow):
         self.selected_video: Optional[VideoInfo] = None
         self.selected_music: Optional[MusicInfo] = None
         self.video_widgets: List[VideoThumbnailWidget] = []
+        self.processed_widgets: List[VideoThumbnailWidget] = []
         self.music_widgets: List[MusicListItem] = []
+        self.current_playing_music: Optional[MusicInfo] = None
         
         # Merge thread
         self.merge_thread: Optional[QThread] = None
+        
+        # Music playback timer for seek slider
+        self.music_timer = QTimer()
+        self.music_timer.timeout.connect(self._update_music_progress)
         
         self._setup_window()
         self._setup_ui()
@@ -327,6 +347,26 @@ class VideoEditorPanel(QMainWindow):
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0px;
             }
+            QTabWidget::pane {
+                border: 1px solid #404040;
+                border-radius: 6px;
+                background-color: #252525;
+            }
+            QTabBar::tab {
+                background-color: #2d2d2d;
+                color: #a0a0a0;
+                padding: 8px 16px;
+                margin-right: 2px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+            }
+            QTabBar::tab:selected {
+                background-color: #3d3d3d;
+                color: #e0e0e0;
+            }
+            QTabBar::tab:hover {
+                background-color: #353535;
+            }
         """)
     
     def _setup_ui(self):
@@ -347,7 +387,7 @@ class VideoEditorPanel(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(15)
         
-        # Videos section
+        # Videos section with tabs
         self._create_videos_section(left_layout)
         
         # Music section
@@ -375,8 +415,8 @@ class VideoEditorPanel(QMainWindow):
         main_layout.addWidget(splitter)
     
     def _create_videos_section(self, parent_layout):
-        """Create the videos thumbnail section."""
-        group = QGroupBox("📹 Videos")
+        """Create the videos thumbnail section with tabs."""
+        group = QGroupBox("Videos")
         group.setStyleSheet("""
             QGroupBox {
                 font-size: 14px;
@@ -396,52 +436,107 @@ class VideoEditorPanel(QMainWindow):
         group_layout = QVBoxLayout(group)
         group_layout.setContentsMargins(10, 15, 10, 10)
         
-        # Toolbar
-        toolbar = QHBoxLayout()
+        # Tab widget for Videos / Processed
+        self.video_tabs = QTabWidget()
         
+        # Tab 1: Original Videos
+        videos_tab = QWidget()
+        videos_tab_layout = QVBoxLayout(videos_tab)
+        videos_tab_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Toolbar for videos
+        toolbar1 = QHBoxLayout()
         self.video_count_label = QLabel("0 videos")
         self.video_count_label.setStyleSheet("color: #909090; font-size: 11px;")
-        toolbar.addWidget(self.video_count_label)
+        toolbar1.addWidget(self.video_count_label)
+        toolbar1.addStretch()
         
-        toolbar.addStretch()
-        
-        refresh_btn = QPushButton("🔄 Refresh")
-        refresh_btn.setStyleSheet("""
+        refresh_btn1 = QPushButton()
+        refresh_btn1.setIcon(load_icon("refresh"))
+        refresh_btn1.setIconSize(QSize(16, 16))
+        refresh_btn1.setFixedSize(28, 28)
+        refresh_btn1.setStyleSheet("""
             QPushButton {
                 background-color: #404040;
-                color: white;
                 border: none;
-                padding: 5px 12px;
                 border-radius: 4px;
-                font-size: 11px;
             }
             QPushButton:hover {
                 background-color: #505050;
             }
         """)
-        refresh_btn.clicked.connect(self._refresh_videos)
-        toolbar.addWidget(refresh_btn)
+        refresh_btn1.setToolTip("Refresh videos")
+        refresh_btn1.clicked.connect(self._refresh_videos)
+        toolbar1.addWidget(refresh_btn1)
+        videos_tab_layout.addLayout(toolbar1)
         
-        group_layout.addLayout(toolbar)
-        
-        # Scroll area for thumbnails
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Scroll area for video thumbnails
+        scroll1 = QScrollArea()
+        scroll1.setWidgetResizable(True)
+        scroll1.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
         self.videos_container = QWidget()
         self.videos_layout = QGridLayout(self.videos_container)
         self.videos_layout.setSpacing(10)
         self.videos_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         
-        scroll.setWidget(self.videos_container)
-        group_layout.addWidget(scroll, stretch=1)
+        scroll1.setWidget(self.videos_container)
+        videos_tab_layout.addWidget(scroll1, stretch=1)
         
+        self.video_tabs.addTab(videos_tab, "Original")
+        
+        # Tab 2: Processed Videos
+        processed_tab = QWidget()
+        processed_tab_layout = QVBoxLayout(processed_tab)
+        processed_tab_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Toolbar for processed
+        toolbar2 = QHBoxLayout()
+        self.processed_count_label = QLabel("0 videos")
+        self.processed_count_label.setStyleSheet("color: #909090; font-size: 11px;")
+        toolbar2.addWidget(self.processed_count_label)
+        toolbar2.addStretch()
+        
+        refresh_btn2 = QPushButton()
+        refresh_btn2.setIcon(load_icon("refresh"))
+        refresh_btn2.setIconSize(QSize(16, 16))
+        refresh_btn2.setFixedSize(28, 28)
+        refresh_btn2.setStyleSheet("""
+            QPushButton {
+                background-color: #404040;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #505050;
+            }
+        """)
+        refresh_btn2.setToolTip("Refresh processed videos")
+        refresh_btn2.clicked.connect(self._refresh_processed)
+        toolbar2.addWidget(refresh_btn2)
+        processed_tab_layout.addLayout(toolbar2)
+        
+        # Scroll area for processed thumbnails
+        scroll2 = QScrollArea()
+        scroll2.setWidgetResizable(True)
+        scroll2.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        self.processed_container = QWidget()
+        self.processed_layout = QGridLayout(self.processed_container)
+        self.processed_layout.setSpacing(10)
+        self.processed_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        
+        scroll2.setWidget(self.processed_container)
+        processed_tab_layout.addWidget(scroll2, stretch=1)
+        
+        self.video_tabs.addTab(processed_tab, "Processed")
+        
+        group_layout.addWidget(self.video_tabs)
         parent_layout.addWidget(group, stretch=1)
     
     def _create_music_section(self, parent_layout):
-        """Create the music list section."""
-        group = QGroupBox("🎵 Background Music")
+        """Create the music list section with seek slider."""
+        group = QGroupBox("Background Music")
         group.setStyleSheet("""
             QGroupBox {
                 font-size: 14px;
@@ -461,18 +556,91 @@ class VideoEditorPanel(QMainWindow):
         group_layout = QVBoxLayout(group)
         group_layout.setContentsMargins(10, 15, 10, 10)
         
-        # Toolbar
-        toolbar = QHBoxLayout()
+        # Music playback controls with seek slider
+        playback_frame = QFrame()
+        playback_frame.setStyleSheet("""
+            QFrame {
+                background-color: #2d2d2d;
+                border-radius: 6px;
+                padding: 8px;
+            }
+        """)
+        playback_layout = QVBoxLayout(playback_frame)
+        playback_layout.setContentsMargins(10, 8, 10, 8)
+        playback_layout.setSpacing(8)
         
-        self.music_count_label = QLabel("0 tracks")
-        self.music_count_label.setStyleSheet("color: #909090; font-size: 11px;")
-        toolbar.addWidget(self.music_count_label)
+        # Now playing label
+        self.now_playing_label = QLabel("No music playing")
+        self.now_playing_label.setStyleSheet("color: #909090; font-size: 11px;")
+        self.now_playing_label.setAlignment(Qt.AlignCenter)
+        playback_layout.addWidget(self.now_playing_label)
         
-        toolbar.addStretch()
+        # Seek slider row
+        seek_row = QHBoxLayout()
+        seek_row.setSpacing(8)
         
-        # Volume control
-        vol_label = QLabel("🔊")
-        toolbar.addWidget(vol_label)
+        self.music_time_label = QLabel("00:00")
+        self.music_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px; min-width: 40px;")
+        seek_row.addWidget(self.music_time_label)
+        
+        self.music_seek_slider = QSlider(Qt.Horizontal)
+        self.music_seek_slider.setRange(0, 1000)
+        self.music_seek_slider.setValue(0)
+        self.music_seek_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                background: #404040;
+                height: 4px;
+                border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                background: #8fad88;
+                width: 12px;
+                margin: -4px 0;
+                border-radius: 6px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #8fad88;
+                border-radius: 2px;
+            }
+        """)
+        self.music_seek_slider.sliderPressed.connect(self._on_music_seek_pressed)
+        self.music_seek_slider.sliderReleased.connect(self._on_music_seek_released)
+        self.music_seek_slider.sliderMoved.connect(self._on_music_seek_moved)
+        seek_row.addWidget(self.music_seek_slider, stretch=1)
+        
+        self.music_duration_label = QLabel("00:00")
+        self.music_duration_label.setStyleSheet("color: #b0b0b0; font-size: 11px; min-width: 40px;")
+        seek_row.addWidget(self.music_duration_label)
+        
+        playback_layout.addLayout(seek_row)
+        
+        # Control buttons row
+        controls_row = QHBoxLayout()
+        controls_row.setSpacing(10)
+        controls_row.addStretch()
+        
+        # Stop button
+        self.music_stop_btn = QPushButton()
+        self.music_stop_btn.setIcon(load_icon("stop"))
+        self.music_stop_btn.setIconSize(QSize(16, 16))
+        self.music_stop_btn.setFixedSize(32, 32)
+        self.music_stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #404040;
+                border: none;
+                border-radius: 16px;
+            }
+            QPushButton:hover {
+                background-color: #505050;
+            }
+        """)
+        self.music_stop_btn.clicked.connect(self._stop_music)
+        controls_row.addWidget(self.music_stop_btn)
+        
+        # Volume icon
+        vol_label = QLabel()
+        vol_label.setPixmap(load_icon("volume").pixmap(16, 16))
+        controls_row.addWidget(vol_label)
         
         self.volume_slider = QSlider(Qt.Horizontal)
         self.volume_slider.setRange(0, 100)
@@ -492,24 +660,21 @@ class VideoEditorPanel(QMainWindow):
             }
         """)
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
-        toolbar.addWidget(self.volume_slider)
+        controls_row.addWidget(self.volume_slider)
         
-        stop_btn = QPushButton("⏹")
-        stop_btn.setFixedSize(28, 28)
-        stop_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #404040;
-                color: white;
-                border: none;
-                border-radius: 14px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #505050;
-            }
-        """)
-        stop_btn.clicked.connect(self._stop_music)
-        toolbar.addWidget(stop_btn)
+        controls_row.addStretch()
+        playback_layout.addLayout(controls_row)
+        
+        group_layout.addWidget(playback_frame)
+        
+        # Toolbar
+        toolbar = QHBoxLayout()
+        
+        self.music_count_label = QLabel("0 tracks")
+        self.music_count_label.setStyleSheet("color: #909090; font-size: 11px;")
+        toolbar.addWidget(self.music_count_label)
+        
+        toolbar.addStretch()
         
         group_layout.addLayout(toolbar)
         
@@ -549,7 +714,9 @@ class VideoEditorPanel(QMainWindow):
         merge_layout.addWidget(self.selection_label)
         
         # Merge button
-        self.merge_btn = QPushButton("🎬 Merge Video with Music")
+        self.merge_btn = QPushButton("  Merge Video with Music")
+        self.merge_btn.setIcon(load_icon("merge"))
+        self.merge_btn.setIconSize(QSize(20, 20))
         self.merge_btn.setEnabled(False)
         self.merge_btn.setStyleSheet("""
             QPushButton {
@@ -575,7 +742,7 @@ class VideoEditorPanel(QMainWindow):
     
     def _create_player_section(self, parent_layout):
         """Create the video player section."""
-        group = QGroupBox("🎥 Preview")
+        group = QGroupBox("Preview")
         group.setStyleSheet("""
             QGroupBox {
                 font-size: 14px;
@@ -610,10 +777,11 @@ class VideoEditorPanel(QMainWindow):
     def _load_content(self):
         """Load videos and music."""
         self._load_videos()
+        self._load_processed()
         self._load_music()
     
     def _load_videos(self):
-        """Load and display videos."""
+        """Load and display videos from the videos directory."""
         # Clear existing
         for widget in self.video_widgets:
             widget.deleteLater()
@@ -639,6 +807,34 @@ class VideoEditorPanel(QMainWindow):
             col = i % cols
             self.videos_layout.addWidget(widget, row, col)
             self.video_widgets.append(widget)
+    
+    def _load_processed(self):
+        """Load and display videos from the processed directory."""
+        # Clear existing
+        for widget in self.processed_widgets:
+            widget.deleteLater()
+        self.processed_widgets.clear()
+        
+        # Clear layout
+        while self.processed_layout.count():
+            item = self.processed_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        # Load processed videos
+        videos = self.processed_video_manager.list_videos(generate_thumbnails=True)
+        self.processed_count_label.setText(f"{len(videos)} videos")
+        
+        # Add to grid (3 columns)
+        cols = 3
+        for i, video_info in enumerate(videos):
+            widget = VideoThumbnailWidget(video_info)
+            widget.clicked.connect(self._on_video_selected)
+            
+            row = i // cols
+            col = i % cols
+            self.processed_layout.addWidget(widget, row, col)
+            self.processed_widgets.append(widget)
     
     def _load_music(self):
         """Load and display music."""
@@ -674,8 +870,10 @@ class VideoEditorPanel(QMainWindow):
         # Update selection
         self.selected_video = video_info
         
-        # Update widget styles
+        # Update widget styles in both tabs
         for widget in self.video_widgets:
+            widget.set_selected(widget.video_info == video_info)
+        for widget in self.processed_widgets:
             widget.set_selected(widget.video_info == video_info)
         
         # Load video in player
@@ -708,11 +906,15 @@ class VideoEditorPanel(QMainWindow):
         # If same music is playing, toggle
         if current == music_info.path and self.music_manager.is_playing():
             self.music_manager.stop()
+            self.music_timer.stop()
             for widget in self.music_widgets:
                 widget.set_playing(False)
+            self.now_playing_label.setText("No music playing")
+            self.current_playing_music = None
         else:
             # Stop current and play new
             self.music_manager.stop()
+            self.music_timer.stop()
             for widget in self.music_widgets:
                 widget.set_playing(False)
             
@@ -721,6 +923,10 @@ class VideoEditorPanel(QMainWindow):
                     if widget.music_info == music_info:
                         widget.set_playing(True)
                         break
+                self.current_playing_music = music_info
+                self.now_playing_label.setText(f"Playing: {music_info.display_name}")
+                self.music_duration_label.setText(self._format_time(music_info.duration))
+                self.music_timer.start(100)  # Update every 100ms
         
         # Also select the music
         self._on_music_selected(music_info)
@@ -728,12 +934,46 @@ class VideoEditorPanel(QMainWindow):
     def _stop_music(self):
         """Stop music playback."""
         self.music_manager.stop()
+        self.music_timer.stop()
         for widget in self.music_widgets:
             widget.set_playing(False)
+        self.now_playing_label.setText("No music playing")
+        self.music_seek_slider.setValue(0)
+        self.music_time_label.setText("00:00")
+        self.current_playing_music = None
     
     def _on_volume_changed(self, value: int):
         """Handle volume slider change."""
         self.music_manager.set_volume(value / 100.0)
+    
+    def _update_music_progress(self):
+        """Update the music seek slider position."""
+        if not self.music_manager.is_playing() or not self.current_playing_music:
+            return
+        
+        # Note: pygame mixer doesn't provide position info easily
+        # This is a simplified implementation
+        pass
+    
+    def _on_music_seek_pressed(self):
+        """Handle seek slider press."""
+        pass
+    
+    def _on_music_seek_released(self):
+        """Handle seek slider release."""
+        pass
+    
+    def _on_music_seek_moved(self, value: int):
+        """Handle seek slider movement."""
+        if self.current_playing_music:
+            position = (value / 1000) * self.current_playing_music.duration
+            self.music_time_label.setText(self._format_time(position))
+    
+    def _format_time(self, seconds: float) -> str:
+        """Format seconds as MM:SS."""
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes:02d}:{secs:02d}"
     
     def _update_merge_button(self):
         """Update merge button state based on selection."""
@@ -756,6 +996,10 @@ class VideoEditorPanel(QMainWindow):
         self.selected_video = None
         self._load_videos()
         self._update_merge_button()
+    
+    def _refresh_processed(self):
+        """Refresh the processed videos list."""
+        self._load_processed()
     
     def _do_merge(self):
         """Perform the video-music merge."""
@@ -783,7 +1027,7 @@ class VideoEditorPanel(QMainWindow):
         
         # Show progress
         self.merge_btn.setEnabled(False)
-        self.merge_btn.setText("⏳ Merging...")
+        self.merge_btn.setText("  Merging...")
         
         # Create worker and thread
         self.merge_thread = QThread()
@@ -807,7 +1051,8 @@ class VideoEditorPanel(QMainWindow):
     def _on_merge_complete(self, result: MergeResult):
         """Handle merge completion."""
         self.merge_btn.setEnabled(True)
-        self.merge_btn.setText("🎬 Merge Video with Music")
+        self.merge_btn.setText("  Merge Video with Music")
+        self.merge_btn.setIcon(load_icon("merge"))
         
         if result.success:
             QMessageBox.information(
@@ -817,6 +1062,10 @@ class VideoEditorPanel(QMainWindow):
                 f"Saved to:\n{result.output_path}\n\n"
                 f"Processing time: {result.duration:.1f}s"
             )
+            # Refresh processed tab
+            self._refresh_processed()
+            # Switch to processed tab
+            self.video_tabs.setCurrentIndex(1)
         else:
             QMessageBox.critical(
                 self,

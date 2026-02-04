@@ -14,7 +14,19 @@ from PySide6.QtWidgets import (
     QSlider, QFrame, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QSize
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QPixmap, QIcon
+
+
+# Get icons path
+ICONS_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
+
+
+def load_icon(name: str) -> QIcon:
+    """Load an icon from the icons folder."""
+    icon_path = ICONS_DIR / f"{name}.svg"
+    if icon_path.exists():
+        return QIcon(str(icon_path))
+    return QIcon()
 
 
 class VideoPlayerWidget(QWidget):
@@ -122,21 +134,27 @@ class VideoPlayerWidget(QWidget):
         button_row.addStretch()
         
         # Rewind button
-        self.rewind_btn = QPushButton("⏮")
+        self.rewind_btn = QPushButton()
+        self.rewind_btn.setIcon(load_icon("rewind"))
+        self.rewind_btn.setIconSize(QSize(18, 18))
         self.rewind_btn.setFixedSize(36, 36)
         self.rewind_btn.setStyleSheet(self._get_button_style())
         self.rewind_btn.clicked.connect(self.rewind)
         button_row.addWidget(self.rewind_btn)
         
         # Play/Pause button
-        self.play_btn = QPushButton("▶")
+        self.play_btn = QPushButton()
+        self.play_btn.setIcon(load_icon("play"))
+        self.play_btn.setIconSize(QSize(22, 22))
         self.play_btn.setFixedSize(44, 44)
         self.play_btn.setStyleSheet(self._get_button_style(primary=True))
         self.play_btn.clicked.connect(self.toggle_play)
         button_row.addWidget(self.play_btn)
         
         # Stop button
-        self.stop_btn = QPushButton("⏹")
+        self.stop_btn = QPushButton()
+        self.stop_btn.setIcon(load_icon("stop"))
+        self.stop_btn.setIconSize(QSize(18, 18))
         self.stop_btn.setFixedSize(36, 36)
         self.stop_btn.setStyleSheet(self._get_button_style())
         self.stop_btn.clicked.connect(self.stop)
@@ -321,7 +339,7 @@ class VideoPlayerWidget(QWidget):
             return
         
         self.is_playing = True
-        self.play_btn.setText("⏸")
+        self.play_btn.setIcon(load_icon("pause"))
         
         # Calculate timer interval from fps
         interval = int(1000 / self.fps)
@@ -331,7 +349,7 @@ class VideoPlayerWidget(QWidget):
     def pause(self):
         """Pause playback."""
         self.is_playing = False
-        self.play_btn.setText("▶")
+        self.play_btn.setIcon(load_icon("play"))
         self.playback_timer.stop()
         self.playback_paused.emit()
     

@@ -181,7 +181,7 @@ class VideoManager:
     
     def generate_thumbnail(self, video_path: Path, force: bool = False) -> Optional[Path]:
         """
-        Generate a thumbnail for a video file.
+        Generate a thumbnail for a video file using the LAST frame.
         
         Args:
             video_path: Path to the video file
@@ -200,14 +200,20 @@ class VideoManager:
         try:
             ffmpeg = self.get_ffmpeg_path()
             
-            # Extract frame at 1 second or 10% of video
+            # Get video info to calculate last frame position
             info = self.get_video_info(video_path)
-            seek_time = min(1.0, info.duration * 0.1) if info else 1.0
+            if info and info.duration > 0:
+                # Seek to 2 seconds before the end (or 90% if short video)
+                seek_time = max(0, info.duration - 2.0)
+                if info.duration < 5:
+                    seek_time = info.duration * 0.9
+            else:
+                seek_time = 0
             
             cmd = [
                 ffmpeg,
                 '-y',  # Overwrite
-                '-ss', str(seek_time),  # Seek time
+                '-sseof', '-1',  # Seek from end (last 1 second)
                 '-i', str(video_path),
                 '-vframes', '1',  # One frame
                 '-vf', 'scale=200:-1',  # Scale to 200px width
