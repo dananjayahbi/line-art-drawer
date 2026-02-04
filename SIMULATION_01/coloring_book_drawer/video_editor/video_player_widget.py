@@ -24,10 +24,23 @@ from PySide6.QtGui import QImage, QPixmap, QIcon, QPainter, QColor
 # Try to import pygame for audio playback
 try:
     import pygame
-    pygame.mixer.init()
     PYGAME_AVAILABLE = True
 except ImportError:
     PYGAME_AVAILABLE = False
+
+
+def ensure_mixer_init():
+    """Ensure pygame mixer is initialized."""
+    if PYGAME_AVAILABLE:
+        try:
+            # Check if mixer is initialized by testing get_init()
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init()
+        except:
+            try:
+                pygame.mixer.init()
+            except Exception as e:
+                print(f"Warning: Could not initialize pygame mixer: {e}")
 
 
 # Get icons path
@@ -52,9 +65,13 @@ class VideoPlayerWidget(QWidget):
     playback_finished = Signal()
     position_changed = Signal(float)  # Current position in seconds
     logo_position_changed = Signal(int, int)  # x_percent, y_percent
+    logo_scale_changed = Signal(float)  # scale factor
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        
+        # Ensure pygame mixer is initialized
+        ensure_mixer_init()
         
         self.video_path: Optional[Path] = None
         self.audio_path: Optional[Path] = None  # Extracted audio temp file
@@ -768,6 +785,33 @@ class VideoPlayerWidget(QWidget):
             return
         
         super().mouseReleaseEvent(event)
+    
+    def wheelEvent(self, event):
+        """Handle mouse wheel for logo resizing."""
+        if self.logo_visible and self.logo_pixmap and self._logo_rect:
+            # Check if mouse is over the logo
+            pos = event.position().toPoint()
+            # Adjust for video_label position
+            label_pos = self.video_label.mapFrom(self, pos)
+            
+            if self._logo_rect.contains(label_pos):
+                # Calculate scale change
+                delta = event.angleDelta().y()
+                scale_change = 0.01 if delta > 0 else -0.01
+                
+                # Update scale with limits
+                new_scale = max(0.05, min(0.5, self.logo_scale + scale_change))
+                if new_scale != self.logo_scale:
+                    self.logo_scale = new_scale
+                    self.logo_scale_changed.emit(self.logo_scale)
+                    # Redraw current frame with updated logo size
+                    if self.cap is not None and not self.is_playing:
+                        self._show_frame(self.current_frame)
+                
+                event.accept()
+                return
+        
+        super().wheelEvent(event)
     
     # ==================== CLEANUP ====================
     

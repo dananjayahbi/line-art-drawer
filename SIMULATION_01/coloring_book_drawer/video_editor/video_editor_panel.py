@@ -982,6 +982,7 @@ class VideoEditorPanel(QMainWindow):
         # Video player
         self.video_player = VideoPlayerWidget()
         self.video_player.logo_position_changed.connect(self._on_logo_position_changed)
+        self.video_player.logo_scale_changed.connect(self._on_logo_scale_changed)
         group_layout.addWidget(self.video_player, stretch=1)
         
         # Video info
@@ -1446,6 +1447,12 @@ class VideoEditorPanel(QMainWindow):
         """Handle logo position change from video player drag."""
         self.logo_manager.set_position(x_percent, y_percent)
         self.logo_position_label.setText(f"Position: {x_percent}%, {y_percent}%")
+    
+    def _on_logo_scale_changed(self, scale: float):
+        """Handle logo scale change from video player wheel scroll."""
+        self.logo_manager.set_scale(scale)
+        scale_percent = int(scale * 100)
+        self.logo_position_label.setText(f"Scale: {scale_percent}%")
     
     # ==================== MERGE METHODS ====================
     

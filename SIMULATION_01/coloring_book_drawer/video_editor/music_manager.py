@@ -14,12 +14,24 @@ import json
 # Try to import pygame for audio playback
 try:
     import pygame
-    pygame.mixer.init()
     PYGAME_AVAILABLE = True
 except ImportError:
     PYGAME_AVAILABLE = False
     print("Warning: pygame not available, music preview will be disabled")
 
+
+def ensure_mixer_init():
+    """Ensure pygame mixer is initialized."""
+    if PYGAME_AVAILABLE:
+        try:
+            # Check if mixer is initialized by testing get_init()
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init()
+        except:
+            try:
+                pygame.mixer.init()
+            except Exception as e:
+                print(f"Warning: Could not initialize pygame mixer: {e}")
 
 @dataclass
 class MusicInfo:
@@ -51,6 +63,9 @@ class MusicManager:
         self.music_dir = Path(music_dir)
         self._music_cache: Dict[str, MusicInfo] = {}
         self._current_playing: Optional[Path] = None
+        
+        # Ensure pygame mixer is initialized
+        ensure_mixer_init()
         
     def get_ffprobe_path(self) -> str:
         """Get the path to ffprobe executable."""
