@@ -1,38 +1,3 @@
-#!/usr/bin/env python3
-"""
-Pencil Shading Engine for Coloring Book Drawer
-===============================================
-Advanced engine for natural pencil drawing simulation that handles:
-- Simple line drawings (existing behavior)
-- Complex shaded artwork with textures, shadows, and gradients
-
-KEY INSIGHT:
-The original reveal engine treats all pixels equally, revealing them in
-circular masks along skeleton paths. This works for line art but creates
-unnatural "bubble" artifacts for shaded regions.
-
-THIS ENGINE SOLVES IT BY:
-1. Decomposing the image into LAYERS:
-   - Edge/Line Layer: Strong edges that define shapes (drawn first)
-   - Shading Layer: Gradual tones, textures, shadows (drawn second with pencil strokes)
-   
-2. Using DIFFERENT reveal strategies for each layer:
-   - Lines: Skeleton-based reveal (original approach)
-   - Shading: Gradient-aware hatching with natural pencil stroke patterns
-
-3. Providing ADAPTIVE SPEED control:
-   - Slower for detailed line work
-   - Faster for broad shading strokes
-
-4. Creating NATURAL PENCIL TEXTURE:
-   - Directional strokes for shading
-   - Pressure variation simulation
-   - Multiple hatching layers for dark areas
-
-Author: GitHub Copilot
-Date: February 2026
-"""
-
 import numpy as np
 import cv2
 from pathlib import Path
