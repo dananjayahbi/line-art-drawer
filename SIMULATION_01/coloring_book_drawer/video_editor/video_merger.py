@@ -105,10 +105,15 @@ class VideoMerger:
         output_name: Optional[str] = None,
         fade_audio: bool = True,
         fade_duration: float = 2.0,
+        logo_path: Optional[Path] = None,
+        logo_x_percent: int = 50,
+        logo_y_percent: int = 90,
+        logo_scale: float = 0.15,
+        logo_opacity: float = 0.85,
         progress_callback: Optional[Callable[[float], None]] = None
     ) -> MergeResult:
         """
-        Merge video with background music.
+        Merge video with background music and optional logo overlay.
         
         The music will be cropped from the END to match the video length.
         This means we use the ending portion of the music track.
@@ -119,6 +124,11 @@ class VideoMerger:
             output_name: Optional custom output filename
             fade_audio: Whether to fade audio in/out
             fade_duration: Duration of fade in seconds
+            logo_path: Optional path to logo image for overlay
+            logo_x_percent: Logo X position (0-100)
+            logo_y_percent: Logo Y position (0-100)
+            logo_scale: Logo scale relative to video width
+            logo_opacity: Logo opacity (0-1)
             progress_callback: Callback for progress updates (0.0 to 1.0)
             
         Returns:
@@ -188,26 +198,86 @@ class VideoMerger:
             # Build the filter string
             audio_filter_str = ",".join(audio_filters) if audio_filters else None
             
+            # Build video filter for logo overlay
+            video_filter_str = None
+            has_logo = logo_path is not None and logo_path.exists()
+            
+            if has_logo:
+                # Get video dimensions
+                video_info = self._get_video_dimensions(video_path)
+                if video_info:
+                    video_width, video_height = video_info
+                    
+                    # Calculate logo size
+                    logo_width = int(video_width * logo_scale)
+                    
+                    # Calculate position
+                    x_pos = int((logo_x_percent / 100) * video_width - logo_width / 2)
+                    y_pos = int((logo_y_percent / 100) * video_height - logo_width / 2)
+                    
+                    # Clamp position
+                    x_pos = max(0, x_pos)
+                    y_pos = max(0, y_pos)
+                    
+                    # Build filter with alpha for opacity
+                    # Output is named [outv] for mapping
+                    opacity_str = f"{logo_opacity:.2f}"
+                    video_filter_str = (
+                        f"[1:v]scale={logo_width}:-1,format=rgba,"
+                        f"colorchannelmixer=aa={opacity_str}[logo];"
+                        f"[0:v][logo]overlay={x_pos}:{y_pos}[outv]"
+                    )
+
+            
             # Build FFmpeg command
             cmd = [
                 ffmpeg,
                 '-y',  # Overwrite output
-                '-i', str(video_path),  # Input video
-                '-i', str(music_path),  # Input audio
-                '-map', '0:v',  # Use video from first input
-                '-map', '1:a',  # Use audio from second input
+                '-i', str(video_path),  # Input video (0)
             ]
+            
+            # Add logo input if needed
+            if has_logo:
+                cmd.extend(['-i', str(logo_path)])  # Input logo (1)
+            
+            cmd.extend(['-i', str(music_path)])  # Input audio (1 or 2)
+            
+            # Map streams based on whether we have a logo
+            if has_logo:
+                # With logo: use filter_complex for video
+                if video_filter_str:
+                    cmd.extend(['-filter_complex', video_filter_str])
+                    cmd.extend(['-map', '[outv]'])  # Use filtered video output (overlay result)
+                cmd.extend(['-map', '2:a'])  # Audio is input 2
+            else:
+                cmd.extend(['-map', '0:v'])  # Use video from first input
+                cmd.extend(['-map', '1:a'])  # Audio is input 1
             
             if audio_filter_str:
                 cmd.extend(['-af', audio_filter_str])
             
+            # Video codec: copy if no logo, encode if logo
+            if has_logo:
+                cmd.extend([
+                    '-c:v', 'libx264',  # Re-encode with H.264
+                    '-preset', 'medium',
+                    '-crf', '23',
+                ])
+            else:
+                cmd.extend(['-c:v', 'copy'])  # Copy video codec (fast)
+            
             cmd.extend([
-                '-c:v', 'copy',  # Copy video codec (fast, no re-encoding)
                 '-c:a', 'aac',  # Encode audio as AAC
                 '-b:a', '192k',  # Audio bitrate
                 '-shortest',  # End when shortest stream ends
                 str(output_path)
             ])
+            
+            # Log the command for debugging
+            print(f"[VideoMerger] Logo path: {logo_path}")
+            print(f"[VideoMerger] Has logo: {has_logo}")
+            print(f"[VideoMerger] Video filter: {video_filter_str}")
+            print(f"[VideoMerger] FFmpeg command: {' '.join(cmd)}")
             
             # Run FFmpeg
             self._cancel_requested = False
@@ -262,6 +332,37 @@ class VideoMerger:
             return float(result.stdout.strip())
         except:
             return 0.0
+    
+    def _get_video_dimensions(self, video_path: Path) -> Optional[tuple]:
+        """Get video width and height."""
+        try:
+            cmd = [
+                self.get_ffprobe_path(),
+                '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_streams',
+                str(video_path)
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            
+            if result.returncode == 0:
+                import json
+                data = json.loads(result.stdout)
+                for stream in data.get('streams', []):
+                    if stream.get('codec_type') == 'video':
+                        width = int(stream.get('width', 0))
+                        height = int(stream.get('height', 0))
+                        if width > 0 and height > 0:
+                            return (width, height)
+            return None
+        except:
+            return None
     
     def cancel(self):
         """Cancel the current merge operation."""

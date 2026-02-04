@@ -1,14 +1,15 @@
 """
 Video Editor Panel Module
 ==========================
-Main video editing window with video browsing, music selection, and merge capabilities.
+Main video editing window with video browsing, music selection, logo overlay,
+and merge capabilities.
 
 Layout:
 - Window divided vertically into 2 sections
-- Right side: Video player/preview
+- Right side: Video player/preview with draggable logo overlay
 - Left side: 
   - Top half: Tabbed video thumbnails (Videos / Processed)
-  - Bottom half: Music list with play controls and seek slider
+  - Bottom half: Music list and logo controls
 """
 
 import os
@@ -19,15 +20,17 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSlider, QFrame, QScrollArea, QSplitter,
     QListWidget, QListWidgetItem, QMessageBox, QProgressDialog,
-    QSizePolicy, QGroupBox, QApplication, QTabWidget
+    QSizePolicy, QGroupBox, QApplication, QTabWidget, QComboBox,
+    QFileDialog, QCheckBox
 )
-from PySide6.QtCore import Qt, QSize, Signal, QTimer, QThread, QObject
+from PySide6.QtCore import Qt, QSize, Signal, QTimer, QThread, QObject, QPoint
 from PySide6.QtGui import QPixmap, QIcon, QFont, QColor
 
 from .video_manager import VideoManager, VideoInfo
 from .music_manager import MusicManager, MusicInfo
 from .video_player_widget import VideoPlayerWidget
 from .video_merger import VideoMerger, MergeResult
+from .logo_manager import LogoManager, LogoInfo
 
 
 # Get paths
@@ -38,6 +41,7 @@ THUMBNAILS_DIR = BASE_DIR / "output" / "thumbnails"
 PROCESSED_DIR = BASE_DIR / "output" / "processed"
 MUSIC_DIR = SIMULATION_DIR / "assets" / "background_music_library"
 ICONS_DIR = SIMULATION_DIR / "assets" / "icons"
+LOGOS_DIR = SIMULATION_DIR / "assets" / "logos"
 
 
 def load_icon(name: str) -> QIcon:
@@ -53,11 +57,26 @@ class MergeWorker(QObject):
     finished = Signal(object)  # MergeResult
     progress = Signal(float)
     
-    def __init__(self, merger: VideoMerger, video_path: Path, music_path: Path):
+    def __init__(
+        self, 
+        merger: VideoMerger, 
+        video_path: Path, 
+        music_path: Path,
+        logo_path: Optional[Path] = None,
+        logo_x_percent: int = 50,
+        logo_y_percent: int = 90,
+        logo_scale: float = 0.15,
+        logo_opacity: float = 0.85
+    ):
         super().__init__()
         self.merger = merger
         self.video_path = video_path
         self.music_path = music_path
+        self.logo_path = logo_path
+        self.logo_x_percent = logo_x_percent
+        self.logo_y_percent = logo_y_percent
+        self.logo_scale = logo_scale
+        self.logo_opacity = logo_opacity
     
     def run(self):
         result = self.merger.merge(
@@ -65,6 +84,11 @@ class MergeWorker(QObject):
             self.music_path,
             fade_audio=True,
             fade_duration=2.0,
+            logo_path=self.logo_path,
+            logo_x_percent=self.logo_x_percent,
+            logo_y_percent=self.logo_y_percent,
+            logo_scale=self.logo_scale,
+            logo_opacity=self.logo_opacity,
             progress_callback=lambda p: self.progress.emit(p)
         )
         self.finished.emit(result)
@@ -322,14 +346,17 @@ class VideoEditorPanel(QMainWindow):
         self.processed_video_manager = VideoManager(PROCESSED_DIR, THUMBNAILS_DIR)
         self.music_manager = MusicManager(MUSIC_DIR)
         self.video_merger = VideoMerger(PROCESSED_DIR)
+        self.logo_manager = LogoManager()
         
         # State
         self.selected_video: Optional[VideoInfo] = None
         self.selected_music: Optional[MusicInfo] = None
+        self.selected_logo: Optional[LogoInfo] = None
         self.video_widgets: List[VideoThumbnailWidget] = []
         self.processed_widgets: List[VideoThumbnailWidget] = []
         self.music_widgets: List[MusicListItem] = []
         self.current_playing_music: Optional[MusicInfo] = None
+        self.logo_enabled = False  # Whether to include logo in merge
         
         # Merge thread
         self.merge_thread: Optional[QThread] = None
@@ -422,6 +449,9 @@ class VideoEditorPanel(QMainWindow):
         
         # Music section
         self._create_music_section(left_layout)
+        
+        # Logo section
+        self._create_logo_section(left_layout)
         
         # Merge button
         self._create_merge_section(left_layout)
@@ -723,6 +753,163 @@ class VideoEditorPanel(QMainWindow):
         
         parent_layout.addWidget(group, stretch=1)
     
+    def _create_logo_section(self, parent_layout):
+        """Create the logo overlay section with dropdown and controls."""
+        group = QGroupBox("Logo Overlay")
+        group.setStyleSheet("""
+            QGroupBox {
+                font-size: 14px;
+                font-weight: bold;
+                border: 1px solid #404040;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+        
+        group_layout = QVBoxLayout(group)
+        group_layout.setContentsMargins(10, 15, 10, 10)
+        group_layout.setSpacing(8)
+        
+        # Logo dropdown with preview
+        dropdown_row = QHBoxLayout()
+        dropdown_row.setSpacing(8)
+        
+        # Logo preview
+        self.logo_preview_label = QLabel()
+        self.logo_preview_label.setFixedSize(48, 48)
+        self.logo_preview_label.setAlignment(Qt.AlignCenter)
+        self.logo_preview_label.setStyleSheet("""
+            QLabel {
+                background-color: #2d2d2d;
+                border: 1px solid #404040;
+                border-radius: 4px;
+            }
+        """)
+        dropdown_row.addWidget(self.logo_preview_label)
+        
+        # Logo dropdown
+        self.logo_combo = QComboBox()
+        self.logo_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #2d2d2d;
+                border: 1px solid #505050;
+                border-radius: 4px;
+                padding: 6px 10px;
+                min-width: 150px;
+                color: #e0e0e0;
+            }
+            QComboBox:hover {
+                border-color: #8fad88;
+            }
+            QComboBox::drop-down {
+                border: none;
+                padding-right: 10px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border: none;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                selection-background-color: #8fad88;
+            }
+        """)
+        self.logo_combo.addItem("No Logo", None)
+        self.logo_combo.currentIndexChanged.connect(self._on_logo_selected)
+        dropdown_row.addWidget(self.logo_combo, stretch=1)
+        
+        # Upload button
+        upload_btn = QPushButton("Upload")
+        upload_btn.setFixedWidth(70)
+        upload_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #404040;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 10px;
+            }
+            QPushButton:hover {
+                background-color: #505050;
+            }
+        """)
+        upload_btn.clicked.connect(self._upload_logo)
+        dropdown_row.addWidget(upload_btn)
+        
+        group_layout.addLayout(dropdown_row)
+        
+        # Controls row
+        controls_row = QHBoxLayout()
+        controls_row.setSpacing(8)
+        
+        # Enable checkbox
+        self.logo_enable_checkbox = QCheckBox("Enable")
+        self.logo_enable_checkbox.setStyleSheet("color: #b0b0b0;")
+        self.logo_enable_checkbox.stateChanged.connect(self._on_logo_enable_changed)
+        controls_row.addWidget(self.logo_enable_checkbox)
+        
+        controls_row.addStretch()
+        
+        # Set as default button
+        self.set_default_btn = QPushButton("Set Default")
+        self.set_default_btn.setEnabled(False)
+        self.set_default_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #404040;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover {
+                background-color: #505050;
+            }
+            QPushButton:disabled {
+                background-color: #303030;
+                color: #606060;
+            }
+        """)
+        self.set_default_btn.clicked.connect(self._set_logo_as_default)
+        controls_row.addWidget(self.set_default_btn)
+        
+        # Show on preview button
+        self.show_logo_btn = QPushButton("Show on Preview")
+        self.show_logo_btn.setEnabled(False)
+        self.show_logo_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #8fad88;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover {
+                background-color: #7a9773;
+            }
+            QPushButton:disabled {
+                background-color: #404040;
+                color: #707070;
+            }
+        """)
+        self.show_logo_btn.clicked.connect(self._show_logo_on_preview)
+        controls_row.addWidget(self.show_logo_btn)
+        
+        group_layout.addLayout(controls_row)
+        
+        # Position info
+        self.logo_position_label = QLabel("Position: Drag logo on preview to adjust")
+        self.logo_position_label.setStyleSheet("color: #707070; font-size: 10px;")
+        group_layout.addWidget(self.logo_position_label)
+        
+        parent_layout.addWidget(group)
+    
     def _create_merge_section(self, parent_layout):
         """Create the merge button section."""
         merge_frame = QFrame()
@@ -794,6 +981,7 @@ class VideoEditorPanel(QMainWindow):
         
         # Video player
         self.video_player = VideoPlayerWidget()
+        self.video_player.logo_position_changed.connect(self._on_logo_position_changed)
         group_layout.addWidget(self.video_player, stretch=1)
         
         # Video info
@@ -805,10 +993,11 @@ class VideoEditorPanel(QMainWindow):
         parent_layout.addWidget(group)
     
     def _load_content(self):
-        """Load videos and music."""
+        """Load videos, music, and logos."""
         self._load_videos()
         self._load_processed()
         self._load_music()
+        self._load_logos()
     
     def _load_videos(self):
         """Load and display videos from the videos directory."""
@@ -1133,6 +1322,133 @@ class VideoEditorPanel(QMainWindow):
         secs = int(seconds % 60)
         return f"{minutes:02d}:{secs:02d}"
     
+    # ==================== LOGO METHODS ====================
+    
+    def _load_logos(self):
+        """Load logos into the dropdown."""
+        self.logo_combo.clear()
+        self.logo_combo.addItem("No Logo", None)
+        
+        logos = self.logo_manager.list_logos()
+        default_logo = self.logo_manager.settings.default_logo
+        default_index = 0
+        
+        for i, logo_info in enumerate(logos):
+            # Add item with display name
+            item_text = logo_info.display_name
+            if logo_info.width and logo_info.height:
+                item_text += f" ({logo_info.width}x{logo_info.height})"
+            
+            self.logo_combo.addItem(item_text, logo_info)
+            
+            # Check if this is the default
+            if default_logo and logo_info.filename == default_logo:
+                default_index = i + 1  # +1 because of "No Logo" item
+        
+        # Select default
+        if default_index > 0:
+            self.logo_combo.setCurrentIndex(default_index)
+    
+    def _on_logo_selected(self, index: int):
+        """Handle logo selection from dropdown."""
+        logo_info = self.logo_combo.currentData()
+        self.selected_logo = logo_info
+        
+        # Update preview
+        if logo_info and logo_info.path.exists():
+            pixmap = QPixmap(str(logo_info.path))
+            scaled = pixmap.scaled(44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.logo_preview_label.setPixmap(scaled)
+            self.set_default_btn.setEnabled(True)
+            self.show_logo_btn.setEnabled(True)
+        else:
+            self.logo_preview_label.clear()
+            self.set_default_btn.setEnabled(False)
+            self.show_logo_btn.setEnabled(False)
+    
+    def _on_logo_enable_changed(self, state: int):
+        """Handle logo enable checkbox change."""
+        self.logo_enabled = state == Qt.CheckState.Checked.value
+        print(f"[Logo] Enable changed: state={state}, logo_enabled={self.logo_enabled}")
+    
+    def _upload_logo(self):
+        """Open file dialog to upload a logo."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Logo Image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.svg *.webp *.gif);;All Files (*)"
+        )
+        
+        if file_path:
+            logo_info = self.logo_manager.add_logo(Path(file_path))
+            if logo_info:
+                # Reload logos
+                self._load_logos()
+                
+                # Select the new logo
+                for i in range(self.logo_combo.count()):
+                    item_data = self.logo_combo.itemData(i)
+                    if item_data and item_data.filename == logo_info.filename:
+                        self.logo_combo.setCurrentIndex(i)
+                        break
+                
+                # Show success message
+                msg = QMessageBox(self)
+                msg.setWindowTitle("Logo Uploaded")
+                msg.setText(f"Logo uploaded successfully:\n\n{logo_info.display_name}")
+                msg.setIcon(QMessageBox.Information)
+                msg.setStyleSheet("""
+                    QMessageBox { background-color: #f0f0f0; }
+                    QMessageBox QLabel { color: #1a1a1a; font-size: 12px; }
+                    QPushButton {
+                        background-color: #8fad88; color: white;
+                        padding: 6px 16px; border-radius: 4px;
+                    }
+                """)
+                msg.exec()
+    
+    def _set_logo_as_default(self):
+        """Set the current logo as default."""
+        if self.selected_logo:
+            self.logo_manager.set_default_logo(self.selected_logo.filename)
+            
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Default Logo Set")
+            msg.setText(f"'{self.selected_logo.display_name}' is now the default logo.")
+            msg.setIcon(QMessageBox.Information)
+            msg.setStyleSheet("""
+                QMessageBox { background-color: #f0f0f0; }
+                QMessageBox QLabel { color: #1a1a1a; font-size: 12px; }
+                QPushButton {
+                    background-color: #8fad88; color: white;
+                    padding: 6px 16px; border-radius: 4px;
+                }
+            """)
+            msg.exec()
+    
+    def _show_logo_on_preview(self):
+        """Show the logo overlay on the video preview."""
+        if not self.selected_logo:
+            return
+        
+        # Enable logo and update video player
+        self.logo_enable_checkbox.setChecked(True)
+        self.video_player.set_logo_overlay(
+            self.selected_logo.path,
+            self.logo_manager.settings.position_x,
+            self.logo_manager.settings.position_y,
+            self.logo_manager.settings.scale,
+            self.logo_manager.settings.opacity
+        )
+    
+    def _on_logo_position_changed(self, x_percent: int, y_percent: int):
+        """Handle logo position change from video player drag."""
+        self.logo_manager.set_position(x_percent, y_percent)
+        self.logo_position_label.setText(f"Position: {x_percent}%, {y_percent}%")
+    
+    # ==================== MERGE METHODS ====================
+    
     def _update_merge_button(self):
         """Update merge button state based on selection."""
         can_merge = self.selected_video is not None and self.selected_music is not None
@@ -1207,12 +1523,37 @@ class VideoEditorPanel(QMainWindow):
         self.merge_btn.setEnabled(False)
         self.merge_btn.setText("  Merging...")
         
+        # Get logo settings if enabled
+        logo_path = None
+        logo_x_percent = 50
+        logo_y_percent = 90
+        logo_scale = 0.15
+        logo_opacity = 0.85
+        
+        print(f"[Merge] Logo enabled: {self.logo_enabled}")
+        print(f"[Merge] Selected logo: {self.selected_logo}")
+        
+        if self.logo_enabled and self.selected_logo:
+            logo_path = self.selected_logo.path
+            settings = self.logo_manager.get_settings()
+            logo_x_percent = settings.position_x
+            logo_y_percent = settings.position_y
+            logo_scale = settings.scale
+            logo_opacity = settings.opacity
+            print(f"[Merge] Logo path: {logo_path}")
+            print(f"[Merge] Logo settings: x={logo_x_percent}, y={logo_y_percent}, scale={logo_scale}, opacity={logo_opacity}")
+        
         # Create worker and thread
         self.merge_thread = QThread()
         self.merge_worker = MergeWorker(
             self.video_merger,
             self.selected_video.path,
-            self.selected_music.path
+            self.selected_music.path,
+            logo_path=logo_path,
+            logo_x_percent=logo_x_percent,
+            logo_y_percent=logo_y_percent,
+            logo_scale=logo_scale,
+            logo_opacity=logo_opacity
         )
         self.merge_worker.moveToThread(self.merge_thread)
         

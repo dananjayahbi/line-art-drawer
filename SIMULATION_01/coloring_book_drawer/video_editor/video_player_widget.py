@@ -3,6 +3,7 @@ Video Player Widget Module
 ===========================
 Custom video player widget using PySide6 and OpenCV for video playback.
 Supports audio playback using pygame for videos with embedded audio.
+Supports draggable logo overlay.
 """
 
 import cv2
@@ -17,8 +18,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QSlider, QFrame, QSizePolicy
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QSize
-from PySide6.QtGui import QImage, QPixmap, QIcon
+from PySide6.QtCore import Qt, QTimer, Signal, QSize, QPoint, QRect
+from PySide6.QtGui import QImage, QPixmap, QIcon, QPainter, QColor
 
 # Try to import pygame for audio playback
 try:
@@ -42,7 +43,7 @@ def load_icon(name: str) -> QIcon:
 
 
 class VideoPlayerWidget(QWidget):
-    """Custom video player widget with playback controls and audio support."""
+    """Custom video player widget with playback controls, audio support, and logo overlay."""
     
     # Signals
     playback_started = Signal()
@@ -50,6 +51,7 @@ class VideoPlayerWidget(QWidget):
     playback_stopped = Signal()
     playback_finished = Signal()
     position_changed = Signal(float)  # Current position in seconds
+    logo_position_changed = Signal(int, int)  # x_percent, y_percent
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -64,6 +66,17 @@ class VideoPlayerWidget(QWidget):
         self.duration = 0.0
         self.has_audio = False
         self._audio_start_frame = 0  # Frame when audio started (for sync)
+        
+        # Logo overlay properties
+        self.logo_path: Optional[Path] = None
+        self.logo_pixmap: Optional[QPixmap] = None
+        self.logo_x_percent = 50  # Position as percentage (0-100)
+        self.logo_y_percent = 90
+        self.logo_scale = 0.15
+        self.logo_opacity = 0.85
+        self.logo_visible = False
+        self._dragging_logo = False
+        self._drag_offset = QPoint(0, 0)
         
         self._setup_ui()
         
@@ -371,7 +384,7 @@ class VideoPlayerWidget(QWidget):
                 self.progress_slider.setValue(progress)
     
     def _display_frame(self, frame):
-        """Convert and display a frame in the label."""
+        """Convert and display a frame in the label with optional logo overlay."""
         # Convert BGR to RGB
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
@@ -394,6 +407,10 @@ class VideoPlayerWidget(QWidget):
         new_w = max(1, new_w)
         new_h = max(1, new_h)
         
+        # Store display dimensions for logo positioning
+        self._display_width = new_w
+        self._display_height = new_h
+        
         # Resize frame
         resized = cv2.resize(rgb_frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
         
@@ -402,8 +419,15 @@ class VideoPlayerWidget(QWidget):
         bytes_per_line = ch * w
         q_image = QImage(resized.data, w, h, bytes_per_line, QImage.Format_RGB888)
         
+        # Convert to pixmap
+        pixmap = QPixmap.fromImage(q_image)
+        
+        # Overlay logo if visible
+        if self.logo_visible and self.logo_pixmap is not None:
+            pixmap = self._overlay_logo(pixmap)
+        
         # Display
-        self.video_label.setPixmap(QPixmap.fromImage(q_image))
+        self.video_label.setPixmap(pixmap)
     
     def _update_frame(self):
         """Timer callback to update frame during playback."""
@@ -579,6 +603,173 @@ class VideoPlayerWidget(QWidget):
     def get_duration(self) -> float:
         """Get video duration in seconds."""
         return self.duration
+    
+    # ==================== LOGO OVERLAY METHODS ====================
+    
+    def set_logo_overlay(
+        self, 
+        logo_path: Path, 
+        x_percent: int = 50, 
+        y_percent: int = 90,
+        scale: float = 0.15,
+        opacity: float = 0.85
+    ):
+        """
+        Set a logo overlay on the video.
+        
+        Args:
+            logo_path: Path to the logo image
+            x_percent: X position as percentage (0-100)
+            y_percent: Y position as percentage (0-100)
+            scale: Logo scale relative to video width
+            opacity: Logo opacity (0-1)
+        """
+        self.logo_path = Path(logo_path)
+        self.logo_x_percent = x_percent
+        self.logo_y_percent = y_percent
+        self.logo_scale = scale
+        self.logo_opacity = opacity
+        
+        # Load the logo pixmap
+        if self.logo_path.exists():
+            self.logo_pixmap = QPixmap(str(self.logo_path))
+            self.logo_visible = True
+            
+            # Refresh display
+            if self.cap is not None:
+                self._show_frame(self.current_frame)
+    
+    def hide_logo_overlay(self):
+        """Hide the logo overlay."""
+        self.logo_visible = False
+        if self.cap is not None:
+            self._show_frame(self.current_frame)
+    
+    def show_logo_overlay(self):
+        """Show the logo overlay."""
+        if self.logo_pixmap is not None:
+            self.logo_visible = True
+            if self.cap is not None:
+                self._show_frame(self.current_frame)
+    
+    def _overlay_logo(self, base_pixmap: QPixmap) -> QPixmap:
+        """Overlay the logo onto the frame pixmap."""
+        if self.logo_pixmap is None:
+            return base_pixmap
+        
+        # Calculate logo size based on scale
+        logo_width = int(base_pixmap.width() * self.logo_scale)
+        scaled_logo = self.logo_pixmap.scaledToWidth(logo_width, Qt.SmoothTransformation)
+        
+        # Calculate position
+        x = int((self.logo_x_percent / 100) * base_pixmap.width() - scaled_logo.width() / 2)
+        y = int((self.logo_y_percent / 100) * base_pixmap.height() - scaled_logo.height() / 2)
+        
+        # Clamp to bounds
+        x = max(0, min(x, base_pixmap.width() - scaled_logo.width()))
+        y = max(0, min(y, base_pixmap.height() - scaled_logo.height()))
+        
+        # Store logo rect for hit testing
+        self._logo_rect = QRect(x, y, scaled_logo.width(), scaled_logo.height())
+        
+        # Create result pixmap
+        result = QPixmap(base_pixmap)
+        painter = QPainter(result)
+        painter.setOpacity(self.logo_opacity)
+        painter.drawPixmap(x, y, scaled_logo)
+        painter.end()
+        
+        return result
+    
+    def get_logo_settings(self) -> dict:
+        """Get current logo overlay settings."""
+        return {
+            'x_percent': self.logo_x_percent,
+            'y_percent': self.logo_y_percent,
+            'scale': self.logo_scale,
+            'opacity': self.logo_opacity,
+            'visible': self.logo_visible
+        }
+    
+    # ==================== MOUSE EVENTS FOR LOGO DRAGGING ====================
+    
+    def mousePressEvent(self, event):
+        """Handle mouse press for logo dragging."""
+        if self.logo_visible and hasattr(self, '_logo_rect'):
+            # Convert global position to video label position
+            local_pos = self.video_label.mapFrom(self, event.pos())
+            
+            # Calculate offset for video centering
+            label_size = self.video_label.size()
+            offset_x = (label_size.width() - getattr(self, '_display_width', 0)) // 2
+            offset_y = (label_size.height() - getattr(self, '_display_height', 0)) // 2
+            
+            # Adjust position
+            adjusted_x = local_pos.x() - offset_x
+            adjusted_y = local_pos.y() - offset_y
+            
+            if self._logo_rect.contains(adjusted_x, adjusted_y):
+                self._dragging_logo = True
+                self._drag_offset = QPoint(
+                    adjusted_x - self._logo_rect.x(),
+                    adjusted_y - self._logo_rect.y()
+                )
+                event.accept()
+                return
+        
+        super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for logo dragging."""
+        if self._dragging_logo and hasattr(self, '_display_width'):
+            # Convert to video label coordinates
+            local_pos = self.video_label.mapFrom(self, event.pos())
+            
+            # Calculate offset for video centering
+            label_size = self.video_label.size()
+            offset_x = (label_size.width() - self._display_width) // 2
+            offset_y = (label_size.height() - self._display_height) // 2
+            
+            # Adjust position
+            adjusted_x = local_pos.x() - offset_x
+            adjusted_y = local_pos.y() - offset_y
+            
+            # Calculate new logo center position as percentage
+            logo_center_x = adjusted_x - self._drag_offset.x() + self._logo_rect.width() // 2
+            logo_center_y = adjusted_y - self._drag_offset.y() + self._logo_rect.height() // 2
+            
+            new_x_percent = int((logo_center_x / self._display_width) * 100)
+            new_y_percent = int((logo_center_y / self._display_height) * 100)
+            
+            # Clamp
+            new_x_percent = max(5, min(95, new_x_percent))
+            new_y_percent = max(5, min(95, new_y_percent))
+            
+            # Update position
+            self.logo_x_percent = new_x_percent
+            self.logo_y_percent = new_y_percent
+            
+            # Refresh display
+            if self.cap is not None:
+                self._show_frame(self.current_frame)
+            
+            event.accept()
+            return
+        
+        super().mouseMoveEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release for logo dragging."""
+        if self._dragging_logo:
+            self._dragging_logo = False
+            # Emit position changed signal
+            self.logo_position_changed.emit(self.logo_x_percent, self.logo_y_percent)
+            event.accept()
+            return
+        
+        super().mouseReleaseEvent(event)
+    
+    # ==================== CLEANUP ====================
     
     def cleanup(self):
         """Clean up resources."""
