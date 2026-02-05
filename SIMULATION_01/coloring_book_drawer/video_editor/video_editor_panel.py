@@ -903,6 +903,50 @@ class VideoEditorPanel(QMainWindow):
         
         group_layout.addLayout(controls_row)
         
+        # Scale slider row
+        scale_row = QHBoxLayout()
+        scale_row.setSpacing(8)
+        
+        scale_label = QLabel("Size:")
+        scale_label.setStyleSheet("color: #b0b0b0;")
+        scale_label.setFixedWidth(35)
+        scale_row.addWidget(scale_label)
+        
+        self.logo_scale_slider = QSlider(Qt.Horizontal)
+        self.logo_scale_slider.setMinimum(5)
+        self.logo_scale_slider.setMaximum(50)
+        self.logo_scale_slider.setValue(15)  # Default 15% scale
+        self.logo_scale_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                background: #404040;
+                height: 6px;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #8fad88;
+                width: 16px;
+                height: 16px;
+                margin: -5px 0;
+                border-radius: 8px;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #a0c098;
+            }
+            QSlider::sub-page:horizontal {
+                background: #8fad88;
+                border-radius: 3px;
+            }
+        """)
+        self.logo_scale_slider.valueChanged.connect(self._on_logo_scale_slider_changed)
+        scale_row.addWidget(self.logo_scale_slider, stretch=1)
+        
+        self.logo_scale_value_label = QLabel("15%")
+        self.logo_scale_value_label.setStyleSheet("color: #b0b0b0;")
+        self.logo_scale_value_label.setFixedWidth(35)
+        scale_row.addWidget(self.logo_scale_value_label)
+        
+        group_layout.addLayout(scale_row)
+        
         # Position info
         self.logo_position_label = QLabel("Position: Drag logo on preview to adjust")
         self.logo_position_label.setStyleSheet("color: #707070; font-size: 10px;")
@@ -1349,6 +1393,11 @@ class VideoEditorPanel(QMainWindow):
         # Select default
         if default_index > 0:
             self.logo_combo.setCurrentIndex(default_index)
+        
+        # Initialize scale slider with saved value
+        saved_scale = int(self.logo_manager.settings.scale * 100)
+        self.logo_scale_slider.setValue(saved_scale)
+        self.logo_scale_value_label.setText(f"{saved_scale}%")
     
     def _on_logo_selected(self, index: int):
         """Handle logo selection from dropdown."""
@@ -1452,7 +1501,24 @@ class VideoEditorPanel(QMainWindow):
         """Handle logo scale change from video player wheel scroll."""
         self.logo_manager.set_scale(scale)
         scale_percent = int(scale * 100)
-        self.logo_position_label.setText(f"Scale: {scale_percent}%")
+        # Update slider without triggering signal loop
+        self.logo_scale_slider.blockSignals(True)
+        self.logo_scale_slider.setValue(scale_percent)
+        self.logo_scale_slider.blockSignals(False)
+        self.logo_scale_value_label.setText(f"{scale_percent}%")
+    
+    def _on_logo_scale_slider_changed(self, value: int):
+        """Handle logo scale slider change."""
+        scale = value / 100.0
+        self.logo_manager.set_scale(scale)
+        self.logo_scale_value_label.setText(f"{value}%")
+        
+        # Update video player if logo is visible
+        if self.video_player.logo_visible:
+            self.video_player.logo_scale = scale
+            # Redraw current frame
+            if self.video_player.cap is not None and not self.video_player.is_playing:
+                self.video_player._show_frame(self.video_player.current_frame)
     
     # ==================== MERGE METHODS ====================
     
