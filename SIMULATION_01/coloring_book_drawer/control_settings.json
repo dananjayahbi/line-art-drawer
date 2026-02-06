@@ -2,7 +2,7 @@
   "width": "800",
   "height": "1000",
   "fps": "60",
-  "target_duration": "10.0",
+  "target_duration": "100.0",
   "thickness": "1.0",
   "use_gpu": true,
   "show_pen": true,
