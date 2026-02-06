@@ -951,8 +951,8 @@ class ControlPanel(QMainWindow):
         scale_layout.addLayout(scale_header)
         
         self.pen_scale_slider = QSlider(Qt.Orientation.Horizontal)
-        self.pen_scale_slider.setMinimum(3)
-        self.pen_scale_slider.setMaximum(30)
+        self.pen_scale_slider.setMinimum(1)  # Minimum 0.1x scale
+        self.pen_scale_slider.setMaximum(30)  # Maximum 3.0x scale
         self.pen_scale_slider.setValue(int(self.pen_scale * 10))
         self.pen_scale_slider.valueChanged.connect(
             lambda v: self.pen_scale_value_label.setText(f"{v/10:.1f}x")
@@ -1621,8 +1621,8 @@ class ControlPanel(QMainWindow):
                 "--custom-pen", self.custom_pen_path,
                 "--pen-tip-x", str(self.pen_tip_x),
                 "--pen-tip-y", str(self.pen_tip_y),
-                "--pen-scale", str(pen_scale),
-                "--pen-rotation"  # Always enable pen rotation
+                "--pen-scale", str(pen_scale)
+                # Note: --pen-rotation removed to keep pen orientation fixed
             ])
         
         # Shading engine settings
