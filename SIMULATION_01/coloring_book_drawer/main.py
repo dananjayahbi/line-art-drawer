@@ -62,6 +62,14 @@ except ImportError as e:
     HAS_ADVANCED_GRADIENT = False
     print(f"Advanced Gradient Engine not available: {e}")
 
+# Import Engine 3D - Zone Progressive Reveal
+try:
+    from engines.zone_progressive import ZoneProgressiveEngine
+    HAS_ZONE_PROGRESSIVE = True
+except ImportError as e:
+    HAS_ZONE_PROGRESSIVE = False
+    print(f"Zone Progressive Engine not available: {e}")
+
 # GPU acceleration - try to import CuPy for CUDA support
 HAS_GPU = False
 GPU_INFO = "No GPU acceleration"
@@ -179,10 +187,11 @@ class ColoringBookDrawerSimulation(BaseSimulation):
     Main simulation using pixel-reveal approach.
     Progressively reveals the original image pixels for perfect reproduction.
     
-    ENHANCED: Now supports three rendering engines:
+    ENHANCED: Now supports four rendering engines:
     - PixelRevealEngine (Engine 1): For simple line drawings (fast, skeleton-based)
     - PencilShadingEngine (Engine 2): For complex shaded artwork with textures/shadows
     - AdvancedGradientEngine (Engine 3): For high-contrast pencil art with rich gradients
+    - ZoneProgressiveEngine (Engine 3D): Focal-point-first dramatic reveal animation
     
     The engine is auto-selected based on image complexity analysis,
     or can be manually selected via the control panel.
@@ -205,7 +214,11 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                  contour_sensitivity=0.5, gradient_smoothness=0.7,
                  texture_detection_strength=0.6, shadow_passes=3,
                  shadow_angle_variation=30.0, brush_softness_contour=0.3,
-                 brush_softness_shading=0.7, pressure_variation=0.5):
+                 brush_softness_shading=0.7, pressure_variation=0.5,
+                 zp_num_zones=10, zp_saliency_threshold=0.3,
+                 zp_max_focal_points=5, zp_animation_mode="multi_focal",
+                 zp_transition_width=0.1, zp_stroke_density=0.8,
+                 zp_enable_portrait=True):
         # FPS is now LOCKED at 60 for all simulations
         super().__init__(width, height, fps=60, title="Coloring Book Drawer")
         
@@ -228,8 +241,9 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.shading_order = shading_order
         self.using_shading_engine = False  # Will be set during setup
         self.using_advanced_gradient = False  # Will be set during setup
+        self.using_zone_progressive = False  # Will be set during setup
         
-        # Engine type: "auto", "pixel_reveal", "pencil_shading", "advanced_gradient"
+        # Engine type: "auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive"
         self.engine_type = engine_type
         
         # Advanced Gradient Engine (Engine 3) settings
@@ -241,6 +255,15 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.brush_softness_contour = brush_softness_contour
         self.brush_softness_shading = brush_softness_shading
         self.pressure_variation = pressure_variation
+        
+        # Zone Progressive Engine (Engine 3D) settings
+        self.zp_num_zones = zp_num_zones
+        self.zp_saliency_threshold = zp_saliency_threshold
+        self.zp_max_focal_points = zp_max_focal_points
+        self.zp_animation_mode = zp_animation_mode
+        self.zp_transition_width = zp_transition_width
+        self.zp_stroke_density = zp_stroke_density
+        self.zp_enable_portrait = zp_enable_portrait
         
         # Pixel reveal engine (one of two engines will be used)
         self.reveal_engine = None
@@ -314,6 +337,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                     engine_choice = "shading"
                 elif self.engine_type == "advanced_gradient":
                     engine_choice = "advanced_gradient"
+                elif self.engine_type == "zone_progressive":
+                    engine_choice = "zone_progressive"
                 else:
                     engine_choice = self._analyze_and_select_engine()
                 
@@ -343,6 +368,34 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                         )
                         
                         # Process with loading screen (Engine 3 is slow like Engine 2)
+                        self._process_with_loading_screen()
+                
+                if engine_choice == "zone_progressive":
+                    if not HAS_ZONE_PROGRESSIVE:
+                        print("\n⚠️  Zone Progressive Engine not available, falling back to Pencil Shading")
+                        engine_choice = "shading"
+                    else:
+                        print("\n🎯 Using ZONE PROGRESSIVE ENGINE (Engine 3D)")
+                        self.using_zone_progressive = True
+                        self.using_advanced_gradient = False
+                        self.using_shading_engine = False
+                        
+                        self.reveal_engine = ZoneProgressiveEngine(
+                            self.image_path,
+                            self.width,
+                            self.height,
+                            padding=40,
+                            use_gpu=self.use_gpu,
+                            num_zones=self.zp_num_zones,
+                            saliency_threshold=self.zp_saliency_threshold,
+                            max_focal_points=self.zp_max_focal_points,
+                            animation_mode=self.zp_animation_mode,
+                            transition_width=self.zp_transition_width,
+                            stroke_density=self.zp_stroke_density,
+                            enable_portrait=self.zp_enable_portrait,
+                        )
+                        
+                        # Process with loading screen (saliency + zone computation)
                         self._process_with_loading_screen()
                 
                 if engine_choice == "shading":
@@ -382,7 +435,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                     self.reveal_engine.process_image()
                 
                 # Adjust brush scale based on thickness setting (for PixelRevealEngine)
-                if not self.using_shading_engine and not self.using_advanced_gradient:
+                if not self.using_shading_engine and not self.using_advanced_gradient and not self.using_zone_progressive:
                     self.reveal_engine.brush_scale = 1.1 + (self.thickness_scale * 0.3)
                 
                 # Auto-calculate speed if target_duration is set
@@ -597,8 +650,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
             return
         
         # Calculate points to reveal this frame based on speed
-        if self.using_shading_engine or self.using_advanced_gradient:
-            # PencilShadingEngine and AdvancedGradientEngine use phase-based speed
+        if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive:
+            # Phase/zone-based engines provide their own base speed
             base_points = self.reveal_engine.get_points_per_update()
             points_per_frame = int(base_points * self.speed)
         else:
@@ -614,8 +667,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         
         # Update pen position (for visual feedback)
         if has_more and self.show_pen:
-            if self.using_shading_engine or self.using_advanced_gradient:
-                # PencilShadingEngine and AdvancedGradientEngine provide pen position directly
+            if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive:
+                # These engines provide pen position directly
                 self.pen_pos = self.reveal_engine.get_current_pen_position()
                 self.pen_visible = True
             else:
@@ -697,7 +750,7 @@ def main():
     
     # Engine selection
     parser.add_argument("--engine-type", type=str, default="auto",
-                        choices=["auto", "pixel_reveal", "pencil_shading", "advanced_gradient"],
+                        choices=["auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive"],
                         help="Rendering engine to use (auto = auto-detect)")
     
     # Advanced Gradient Engine (Engine 3) options
@@ -717,6 +770,23 @@ def main():
                         help="Engine 3: Brush softness for shading strokes (0.0-1.0)")
     parser.add_argument("--pressure-variation", type=float, default=0.5,
                         help="Engine 3: Stroke pressure variation (0.0-1.0)")
+    
+    # Zone Progressive Engine (Engine 3D) options
+    parser.add_argument("--zp-num-zones", type=int, default=10,
+                        help="Engine 3D: Number of reveal zones (3-25)")
+    parser.add_argument("--zp-saliency-threshold", type=float, default=0.3,
+                        help="Engine 3D: Minimum saliency for focal point detection (0.0-1.0)")
+    parser.add_argument("--zp-max-focal-points", type=int, default=5,
+                        help="Engine 3D: Maximum number of focal points (1-10)")
+    parser.add_argument("--zp-animation-mode", type=str, default="multi_focal",
+                        choices=["single_focal", "multi_focal", "spiral", "burst"],
+                        help="Engine 3D: Animation mode for reveal")
+    parser.add_argument("--zp-transition-width", type=float, default=0.1,
+                        help="Engine 3D: Zone transition width (0.0-1.0)")
+    parser.add_argument("--zp-stroke-density", type=float, default=0.8,
+                        help="Engine 3D: Stroke density within zones (0.0-1.0)")
+    parser.add_argument("--zp-enable-portrait", type=str, default="True",
+                        help="Engine 3D: Enable portrait face/eye detection (True/False)")
     
     args = parser.parse_args()
     
@@ -773,6 +843,14 @@ def main():
         brush_softness_contour=args.brush_softness_contour,
         brush_softness_shading=args.brush_softness_shading,
         pressure_variation=args.pressure_variation,
+        # Zone Progressive Engine (Engine 3D) options
+        zp_num_zones=args.zp_num_zones,
+        zp_saliency_threshold=args.zp_saliency_threshold,
+        zp_max_focal_points=args.zp_max_focal_points,
+        zp_animation_mode=args.zp_animation_mode,
+        zp_transition_width=args.zp_transition_width,
+        zp_stroke_density=args.zp_stroke_density,
+        zp_enable_portrait=str(args.zp_enable_portrait).lower() == "true",
     )
     
     sim.run()

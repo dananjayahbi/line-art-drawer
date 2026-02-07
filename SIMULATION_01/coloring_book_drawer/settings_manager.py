@@ -76,7 +76,16 @@ class SettingsManager:
             "shadow_angle_variation": 30.0,
             "brush_softness_contour": 0.3,
             "brush_softness_shading": 0.7,
-            "pressure_variation": 0.5
+            "pressure_variation": 0.5,
+            
+            # Engine 3D: Zone Progressive settings
+            "zp_num_zones": 10,
+            "zp_saliency_threshold": 0.3,
+            "zp_max_focal_points": 5,
+            "zp_animation_mode": "multi_focal",
+            "zp_transition_width": 0.1,
+            "zp_stroke_density": 0.8,
+            "zp_enable_portrait": True
         }
     
     def save_settings(self, settings_dict):

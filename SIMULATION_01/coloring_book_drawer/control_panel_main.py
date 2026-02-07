@@ -181,6 +181,15 @@ class ControlPanel(QMainWindow):
         self.brush_softness_contour = float(settings.get("brush_softness_contour", 0.3))
         self.brush_softness_shading = float(settings.get("brush_softness_shading", 0.7))
         self.pressure_variation = float(settings.get("pressure_variation", 0.5))
+        
+        # Zone Progressive Engine settings (Engine 3D)
+        self.zp_num_zones = int(settings.get("zp_num_zones", 10))
+        self.zp_saliency_threshold = float(settings.get("zp_saliency_threshold", 0.3))
+        self.zp_max_focal_points = int(settings.get("zp_max_focal_points", 5))
+        self.zp_animation_mode = settings.get("zp_animation_mode", "multi_focal")
+        self.zp_transition_width = float(settings.get("zp_transition_width", 0.1))
+        self.zp_stroke_density = float(settings.get("zp_stroke_density", 0.8))
+        self.zp_enable_portrait = settings.get("zp_enable_portrait", True)
     
     def _get_shading_order_display(self) -> str:
         """Convert internal shading order value to display text."""
@@ -206,7 +215,8 @@ class ControlPanel(QMainWindow):
             0: "auto",
             1: "pixel_reveal",
             2: "pencil_shading",
-            3: "advanced_gradient"
+            3: "advanced_gradient",
+            4: "zone_progressive"
         }
         return engine_map.get(index, "auto")
     
@@ -216,7 +226,8 @@ class ControlPanel(QMainWindow):
             "auto": 0,
             "pixel_reveal": 1,
             "pencil_shading": 2,
-            "advanced_gradient": 3
+            "advanced_gradient": 3,
+            "zone_progressive": 4
         }
         return index_map.get(engine_type, 0)
     
@@ -270,7 +281,15 @@ class ControlPanel(QMainWindow):
             "shadow_angle_variation": str(self.ag_shadow_angle_slider.value()),
             "brush_softness_contour": str(self.ag_brush_contour_slider.value() / 10.0),
             "brush_softness_shading": str(self.ag_brush_shading_slider.value() / 10.0),
-            "pressure_variation": str(self.ag_pressure_slider.value() / 10.0)
+            "pressure_variation": str(self.ag_pressure_slider.value() / 10.0),
+            # Zone Progressive Engine settings (Engine 3D)
+            "zp_num_zones": str(self.zp_num_zones_slider.value()),
+            "zp_saliency_threshold": str(self.zp_saliency_slider.value() / 10.0),
+            "zp_max_focal_points": str(self.zp_focal_points_slider.value()),
+            "zp_animation_mode": self._get_zp_animation_mode_value(self.zp_animation_mode_combo.currentText()),
+            "zp_transition_width": str(self.zp_transition_slider.value() / 10.0),
+            "zp_stroke_density": str(self.zp_stroke_density_slider.value() / 10.0),
+            "zp_enable_portrait": self.zp_portrait_toggle.isChecked()
         }
         
         if self.settings_manager.save_settings(settings):
@@ -776,6 +795,7 @@ class ControlPanel(QMainWindow):
         # Engine-specific settings sections (will be shown/hidden based on selection)
         self._create_shading_settings(layout)
         self._create_advanced_gradient_settings(layout)
+        self._create_zone_progressive_settings(layout)
         
         # Set initial visibility based on current engine_type
         self._on_engine_type_changed(self._get_engine_type_index(self.engine_type))
@@ -803,14 +823,16 @@ class ControlPanel(QMainWindow):
             "• Auto-detect: Analyzes image complexity automatically\n"
             "• Engine 1 - Pixel Reveal: Fast, skeleton-based line art\n"
             "• Engine 2 - Pencil Shading: Hatching-based shading\n"
-            "• Engine 3 - Advanced Gradient: Direction-aware gradient shading"
+            "• Engine 3 - Advanced Gradient: Direction-aware gradient shading\n"
+            "• Engine 3D - Zone Progressive: Focal-point-first dramatic reveal"
         )
         self.engine_type_combo = QComboBox()
         self.engine_type_combo.addItems([
             "🔍 Auto-detect",
             "✏️ Engine 1: Pixel Reveal (Line Art)",
             "🎨 Engine 2: Pencil Shading",
-            "🌈 Engine 3: Advanced Gradient"
+            "🌈 Engine 3: Advanced Gradient",
+            "🎯 Engine 3D: Zone Progressive"
         ])
         self.engine_type_combo.setCurrentIndex(self._get_engine_type_index(self.engine_type))
         self.engine_type_combo.setMinimumWidth(200)
@@ -1124,6 +1146,158 @@ class ControlPanel(QMainWindow):
         
         parent_layout.addLayout(slider_layout)
     
+    def _create_zone_progressive_settings(self, layout):
+        """Create Zone Progressive Engine (Engine 3D) settings section."""
+        self.zone_progressive_settings_group = QGroupBox("🎯 Zone Progressive Engine Settings")
+        group_layout = QVBoxLayout(self.zone_progressive_settings_group)
+        group_layout.setSpacing(10)
+        
+        # Info label
+        info_label = QLabel(
+            "Engine 3D reveals artwork from visually important focal points outward. "
+            "It detects saliency, faces, and eyes to create dramatic unveiling animations."
+        )
+        info_label.setStyleSheet("QLabel { color: #8b7355; font-size: 10px; font-style: italic; }")
+        info_label.setWordWrap(True)
+        group_layout.addWidget(info_label)
+        
+        # --- Number of Zones ---
+        zones_layout = QVBoxLayout()
+        zones_layout.setSpacing(5)
+        zones_header = QHBoxLayout()
+        zones_label = QLabel("Number of Zones:")
+        zones_label.setToolTip("Number of concentric reveal zones (more = finer progression)")
+        self.zp_num_zones_value_label = QLabel(f"{self.zp_num_zones}")
+        self.zp_num_zones_value_label.setStyleSheet("QLabel { color: #5a8f7b; font-weight: bold; }")
+        zones_header.addWidget(zones_label)
+        zones_header.addStretch()
+        zones_header.addWidget(self.zp_num_zones_value_label)
+        zones_layout.addLayout(zones_header)
+        
+        self.zp_num_zones_slider = QSlider(Qt.Orientation.Horizontal)
+        self.zp_num_zones_slider.setMinimum(3)
+        self.zp_num_zones_slider.setMaximum(25)
+        self.zp_num_zones_slider.setValue(self.zp_num_zones)
+        self.zp_num_zones_slider.valueChanged.connect(
+            lambda v: self.zp_num_zones_value_label.setText(f"{v}")
+        )
+        zones_layout.addWidget(self.zp_num_zones_slider)
+        group_layout.addLayout(zones_layout)
+        
+        # --- Saliency Threshold ---
+        self._add_ag_slider(group_layout, "Saliency Threshold:",
+                           "Minimum saliency for focal point detection (lower = more focal points)",
+                           "zp_saliency", self.zp_saliency_threshold,
+                           min_val=1, max_val=9, divisor=10.0, suffix="")
+        
+        # --- Max Focal Points ---
+        focal_layout = QVBoxLayout()
+        focal_layout.setSpacing(5)
+        focal_header = QHBoxLayout()
+        focal_label = QLabel("Max Focal Points:")
+        focal_label.setToolTip("Maximum number of focal centers to detect")
+        self.zp_focal_points_value_label = QLabel(f"{self.zp_max_focal_points}")
+        self.zp_focal_points_value_label.setStyleSheet("QLabel { color: #5a8f7b; font-weight: bold; }")
+        focal_header.addWidget(focal_label)
+        focal_header.addStretch()
+        focal_header.addWidget(self.zp_focal_points_value_label)
+        focal_layout.addLayout(focal_header)
+        
+        self.zp_focal_points_slider = QSlider(Qt.Orientation.Horizontal)
+        self.zp_focal_points_slider.setMinimum(1)
+        self.zp_focal_points_slider.setMaximum(10)
+        self.zp_focal_points_slider.setValue(self.zp_max_focal_points)
+        self.zp_focal_points_slider.valueChanged.connect(
+            lambda v: self.zp_focal_points_value_label.setText(f"{v}")
+        )
+        focal_layout.addWidget(self.zp_focal_points_slider)
+        group_layout.addLayout(focal_layout)
+        
+        # Separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("QFrame { color: #d4c4b0; }")
+        group_layout.addWidget(separator)
+        
+        # --- Animation Mode ---
+        mode_layout = QHBoxLayout()
+        mode_label = QLabel("Animation Mode:")
+        mode_label.setToolTip(
+            "How the reveal animation plays:\n"
+            "• Multi Focal: Multiple points reveal simultaneously\n"
+            "• Single Focal: One center point, radial reveal\n"
+            "• Spiral: Focal to edge in spiral pattern\n"
+            "• Burst: Quick focal reveal, slow background"
+        )
+        self.zp_animation_mode_combo = QComboBox()
+        self.zp_animation_mode_combo.addItems([
+            "Multi Focal",
+            "Single Focal",
+            "Spiral",
+            "Burst"
+        ])
+        self.zp_animation_mode_combo.setCurrentText(
+            self._get_zp_animation_mode_display(self.zp_animation_mode)
+        )
+        mode_layout.addWidget(mode_label)
+        mode_layout.addStretch()
+        mode_layout.addWidget(self.zp_animation_mode_combo)
+        group_layout.addLayout(mode_layout)
+        
+        # --- Transition Width ---
+        self._add_ag_slider(group_layout, "Transition Width:",
+                           "Width of smooth transition between zones (0=sharp, 1=wide)",
+                           "zp_transition", self.zp_transition_width,
+                           min_val=0, max_val=10, divisor=10.0, suffix="")
+        
+        # --- Stroke Density ---
+        self._add_ag_slider(group_layout, "Stroke Density:",
+                           "Density of reveal strokes within zones (0=sparse, 1=dense)",
+                           "zp_stroke_density", self.zp_stroke_density,
+                           min_val=1, max_val=10, divisor=10.0, suffix="")
+        
+        # Separator
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.HLine)
+        separator2.setStyleSheet("QFrame { color: #d4c4b0; }")
+        group_layout.addWidget(separator2)
+        
+        # --- Enable Portrait Detection ---
+        portrait_layout = QHBoxLayout()
+        portrait_label = QLabel("Portrait Detection:")
+        portrait_label.setToolTip(
+            "Enable face/eye detection for portraits. "
+            "Eyes and faces are given highest priority as focal points."
+        )
+        self.zp_portrait_toggle = QCheckBox()
+        self.zp_portrait_toggle.setChecked(self.zp_enable_portrait)
+        portrait_layout.addWidget(portrait_label)
+        portrait_layout.addStretch()
+        portrait_layout.addWidget(self.zp_portrait_toggle)
+        group_layout.addLayout(portrait_layout)
+        
+        layout.addWidget(self.zone_progressive_settings_group)
+    
+    def _get_zp_animation_mode_value(self, display_text: str) -> str:
+        """Convert display text to internal animation mode value."""
+        mode_map = {
+            "Multi Focal": "multi_focal",
+            "Single Focal": "single_focal",
+            "Spiral": "spiral",
+            "Burst": "burst"
+        }
+        return mode_map.get(display_text, "multi_focal")
+    
+    def _get_zp_animation_mode_display(self, mode: str) -> str:
+        """Convert internal animation mode to display text."""
+        display_map = {
+            "multi_focal": "Multi Focal",
+            "single_focal": "Single Focal",
+            "spiral": "Spiral",
+            "burst": "Burst"
+        }
+        return display_map.get(mode, "Multi Focal")
+    
     def _on_engine_type_changed(self, index: int):
         """Handle engine type selection change. Show/hide engine-specific settings."""
         self._update_engine_description(index)
@@ -1138,6 +1312,11 @@ class ControlPanel(QMainWindow):
         if hasattr(self, 'advanced_gradient_settings_group'):
             # Show for Auto-detect (0), or Engine 3 (3)
             self.advanced_gradient_settings_group.setVisible(index in (0, 3))
+        
+        # Engine 3D (Zone Progressive) settings
+        if hasattr(self, 'zone_progressive_settings_group'):
+            # Show for Auto-detect (0), or Engine 3D (4)
+            self.zone_progressive_settings_group.setVisible(index in (0, 4))
     
     def _update_engine_description(self, index: int):
         """Update the engine description label based on selection."""
@@ -1149,7 +1328,9 @@ class ControlPanel(QMainWindow):
             2: "🎨 Engine 2 (Pencil Shading): Hatching-based rendering for complex artwork. "
                "Best for images with textures and shadows.",
             3: "🌈 Engine 3 (Advanced Gradient): Direction-aware gradient shading with "
-               "structure tensor analysis. Best for high-contrast pencil art with rich shadows."
+               "structure tensor analysis. Best for high-contrast pencil art with rich shadows.",
+            4: "🎯 Engine 3D (Zone Progressive): Reveals artwork from visually important regions "
+               "outward. Best for portraits, centered compositions, and dramatic reveals."
         }
         if hasattr(self, 'engine_description_label'):
             self.engine_description_label.setText(descriptions.get(index, ""))
@@ -1828,6 +2009,15 @@ class ControlPanel(QMainWindow):
         self.ag_brush_shading_slider.setValue(int(self.brush_softness_shading * 10))
         self.ag_pressure_slider.setValue(int(self.pressure_variation * 10))
         
+        # Zone Progressive Engine settings (Engine 3D)
+        self.zp_num_zones_slider.setValue(self.zp_num_zones)
+        self.zp_saliency_slider.setValue(int(self.zp_saliency_threshold * 10))
+        self.zp_focal_points_slider.setValue(self.zp_max_focal_points)
+        self.zp_animation_mode_combo.setCurrentText(self._get_zp_animation_mode_display(self.zp_animation_mode))
+        self.zp_transition_slider.setValue(int(self.zp_transition_width * 10))
+        self.zp_stroke_density_slider.setValue(int(self.zp_stroke_density * 10))
+        self.zp_portrait_toggle.setChecked(self.zp_enable_portrait)
+        
         # Update pen status label and preview
         print(f"DEBUG _update_ui_from_settings: use_custom_pen={self.use_custom_pen}, custom_pen_path='{self.custom_pen_path}'")
         if self.use_custom_pen and self.custom_pen_path:
@@ -1958,6 +2148,17 @@ class ControlPanel(QMainWindow):
             "--brush-softness-contour", str(self.ag_brush_contour_slider.value() / 10.0),
             "--brush-softness-shading", str(self.ag_brush_shading_slider.value() / 10.0),
             "--pressure-variation", str(self.ag_pressure_slider.value() / 10.0)
+        ])
+        
+        # Zone Progressive Engine settings (Engine 3D)
+        cmd.extend([
+            "--zp-num-zones", str(self.zp_num_zones_slider.value()),
+            "--zp-saliency-threshold", str(self.zp_saliency_slider.value() / 10.0),
+            "--zp-max-focal-points", str(self.zp_focal_points_slider.value()),
+            "--zp-animation-mode", self._get_zp_animation_mode_value(self.zp_animation_mode_combo.currentText()),
+            "--zp-transition-width", str(self.zp_transition_slider.value() / 10.0),
+            "--zp-stroke-density", str(self.zp_stroke_density_slider.value() / 10.0),
+            "--zp-enable-portrait", str(self.zp_portrait_toggle.isChecked())
         ])
         
         # Launch in thread
