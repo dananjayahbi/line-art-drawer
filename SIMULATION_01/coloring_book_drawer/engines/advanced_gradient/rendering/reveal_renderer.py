@@ -7,7 +7,7 @@ a soft alpha mask with phase-specific brush behavior.
 
 import numpy as np
 import math
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 from ..config import BrushConfig, BRUSH_PRESETS
 
 
@@ -19,11 +19,14 @@ class RevealRenderer:
     """
 
     def __init__(self, image_shape: Tuple[int, int],
-                 bg_color: Tuple[int, int, int] = (255, 255, 255)):
+                 bg_color: Tuple[int, int, int] = (255, 255, 255),
+                 phase_weights: Dict[str, float] = None):
         """
         Args:
             image_shape: (height, width) of the canvas
             bg_color: Background color RGB
+            phase_weights: Optional per-phase opacity weight multipliers
+                           e.g. {"contour": 1.0, "gradient": 0.8, "shadow": 1.0}
         """
         self.h, self.w = image_shape
         self.bg_color = np.array(bg_color, dtype=np.uint8)
@@ -33,6 +36,9 @@ class RevealRenderer:
 
         # Pressure accumulation map
         self.pressure_map = np.zeros((self.h, self.w), dtype=np.float32)
+        
+        # Per-phase weight multipliers for controlling visibility
+        self.phase_weights = phase_weights or {}
 
     def draw_stroke_point(self, x: float, y: float, pressure: float,
                           width: float, intensity: float, phase: str,
@@ -64,7 +70,21 @@ class RevealRenderer:
         radius = max(1.0, width * brush.size_multiplier)
 
         # Calculate effective opacity
-        opacity = pressure * brush.opacity_base * intensity
+        # Phase weight multiplier (default 1.0 if not specified)
+        phase_weight = self.phase_weights.get(phase, 1.0)
+        
+        # For contour/detail phases: opacity directly from pressure + base
+        # For shading phases (gradient/texture/shadow): decouple from raw intensity
+        #   so light-area strokes are actually visible
+        if phase in ('gradient', 'texture', 'shadow'):
+            # Use intensity to scale between a minimum and maximum reveal
+            # This ensures even light areas get meaningfully revealed
+            min_reveal = 0.3  # Minimum reveal for any shading stroke
+            scaled_intensity = min_reveal + (1.0 - min_reveal) * intensity
+            opacity = pressure * brush.opacity_base * scaled_intensity * phase_weight
+        else:
+            # Contour/detail: original formula works well
+            opacity = pressure * brush.opacity_base * intensity * phase_weight
 
         # Draw the soft circle
         self._draw_soft_circle(ix, iy, radius, opacity, intensity, brush.softness)
@@ -87,7 +107,11 @@ class RevealRenderer:
                     iix, iiy = int(interp_x), int(interp_y)
                     if 0 <= iix < self.w and 0 <= iiy < self.h:
                         ir = max(1.0, interp_w * brush.size_multiplier)
-                        io = interp_p * brush.opacity_base * interp_i
+                        if phase in ('gradient', 'texture', 'shadow'):
+                            scaled_i = min_reveal + (1.0 - min_reveal) * interp_i
+                            io = interp_p * brush.opacity_base * scaled_i * phase_weight
+                        else:
+                            io = interp_p * brush.opacity_base * interp_i * phase_weight
                         self._draw_soft_circle(iix, iiy, ir, io, interp_i, brush.softness)
 
     def _draw_soft_circle(self, x: int, y: int, radius: float,
@@ -123,6 +147,8 @@ class RevealRenderer:
                         binary_mask: np.ndarray = None) -> np.ndarray:
         """
         Composite the current reveal state with original image.
+        Includes a minimum-contrast guarantee so that even light-area
+        strokes produce perceptible darkening.
 
         Args:
             original_image: RGB numpy array (h, w, 3)
@@ -139,8 +165,23 @@ class RevealRenderer:
             effective_reveal = reveal
 
         reveal_3ch = np.stack([effective_reveal] * 3, axis=-1)
-        frame = self.bg_color * (1 - reveal_3ch) + original_image * reveal_3ch
-        return frame.astype(np.uint8)
+        original_f = original_image.astype(np.float32)
+        bg_f = self.bg_color.astype(np.float32).reshape(1, 1, 3)
+
+        # Standard compositing: blend between white background and original pixels
+        frame = bg_f * (1.0 - reveal_3ch) + original_f * reveal_3ch
+
+        # Minimum-contrast guarantee: for near-white original pixels, standard
+        # blending produces changes below the perceptual threshold (e.g. gray 240
+        # only changes ~15 levels at full reveal). Inject a floor darkening 
+        # proportional to reveal so every stroke is visibly different from white.
+        pixel_darkness = np.mean(bg_f - original_f, axis=-1)  # how dark vs white
+        min_change = 18.0  # minimum gray-level darkening at full reveal
+        shortfall = np.maximum(0.0, min_change - pixel_darkness)  # per-pixel shortfall
+        boost = shortfall * effective_reveal  # scale by current reveal amount
+        frame -= boost[..., np.newaxis]
+
+        return np.clip(frame, 0, 255).astype(np.uint8)
 
     def reset(self):
         """Reset the reveal mask for re-animation."""

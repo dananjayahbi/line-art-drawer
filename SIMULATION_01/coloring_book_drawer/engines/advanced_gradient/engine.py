@@ -71,7 +71,13 @@ class AdvancedGradientEngine:
                  shadow_angle_variation: float = 30.0,
                  brush_softness_contour: float = 0.3,
                  brush_softness_shading: float = 0.7,
-                 pressure_variation: float = 0.5):
+                 pressure_variation: float = 0.5,
+                 # Phase weight controls
+                 phase_1_weight: float = 1.0,
+                 phase_2_weight: float = 0.8,
+                 phase_3_weight: float = 1.0,
+                 merge_shading_phases: bool = False,
+                 auto_analyze: bool = False):
         
         self.image_path = image_path
         self.target_width = target_width
@@ -100,6 +106,11 @@ class AdvancedGradientEngine:
                 brush_softness_contour=brush_softness_contour,
                 brush_softness_shading=brush_softness_shading,
                 pressure_variation=pressure_variation,
+                phase_1_weight=phase_1_weight,
+                phase_2_weight=phase_2_weight,
+                phase_3_weight=phase_3_weight,
+                merge_shading_phases=merge_shading_phases,
+                auto_analyze=auto_analyze,
             )
 
         # Image data
@@ -156,6 +167,13 @@ class AdvancedGradientEngine:
             return False
 
         # ═══════════════════════════════════════════════
+        # AUTO-ANALYZE (optional): analyze the image and set optimal settings
+        # ═══════════════════════════════════════════════
+        if self.config.auto_analyze:
+            update_progress(1, "Auto-analyzing image for optimal settings...")
+            self._auto_analyze_image()
+
+        # ═══════════════════════════════════════════════
         # STAGE 2: Advanced Analysis
         # ═══════════════════════════════════════════════
         update_progress(2, "Running advanced analysis (structure tensor, edges, regions)...")
@@ -205,7 +223,9 @@ class AdvancedGradientEngine:
         img = self._resize_to_canvas(img)
         self.original_image = img
         self.grayscale = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        self.binary_mask = self.grayscale < 240
+        # Use a generous threshold so highlight/light-area strokes 
+        # aren't zeroed out by the binary mask during compositing
+        self.binary_mask = self.grayscale < 252
 
         print(f"  Image size: {img.shape[1]}x{img.shape[0]}")
         print(f"  Non-white pixels: {np.sum(self.binary_mask):,} "
@@ -364,11 +384,125 @@ class AdvancedGradientEngine:
         print(f"  [Enhancement] Added {len(enhancement)} enhancement points")
 
     def _init_animation_state(self):
-        """Initialize the animation renderer."""
+        """Initialize the animation renderer with phase weight mapping."""
         h, w = self.original_image.shape[:2]
-        self.renderer = RevealRenderer((h, w))
+        
+        # Build phase_weights dict mapping internal phase names to user-facing weights
+        # User Phase 1 (Lines) → contour, detail
+        # User Phase 2 (Shading) → gradient, texture, highlight 
+        # User Phase 3 (Dark + Finishing) → shadow
+        phase_weights = {
+            'contour': self.config.phase_1_weight,
+            'detail': self.config.phase_1_weight,
+            'gradient': self.config.phase_2_weight,
+            'texture': self.config.phase_2_weight,
+            'highlight': self.config.phase_2_weight,
+            'shadow': self.config.phase_3_weight,
+        }
+        
+        self.renderer = RevealRenderer((h, w), phase_weights=phase_weights)
         self.current_reveal_idx = 0
         print(f"  Animation ready: {len(self.reveal_sequence)} points to reveal")
+        print(f"  Phase weights: Lines={self.config.phase_1_weight:.2f}, "
+              f"Shading={self.config.phase_2_weight:.2f}, "
+              f"Dark={self.config.phase_3_weight:.2f}")
+
+    # ═══════════════════════════════════════════════════════
+    # AUTO-ANALYZE AND PHASE MERGE
+    # ═══════════════════════════════════════════════════════
+
+    def _auto_analyze_image(self):
+        """
+        Analyze the image and automatically set optimal phase weights and parameters.
+        Examines histogram distribution, edge density, dark area ratio, and shade coverage.
+        """
+        gray = self.grayscale
+        h, w = gray.shape
+        total_pixels = h * w
+
+        # --- Histogram analysis ---
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+        hist_norm = hist / total_pixels
+
+        # Dark pixels (< 80), mid pixels (80-180), light pixels (> 180)
+        dark_ratio = np.sum(hist_norm[:80])
+        mid_ratio = np.sum(hist_norm[80:180])
+        light_ratio = np.sum(hist_norm[180:])
+
+        # --- Edge density ---
+        edges = cv2.Canny(gray, 50, 150)
+        edge_ratio = np.sum(edges > 0) / total_pixels
+
+        # --- Content pixels (non-white) ---
+        content_mask = gray < 240
+        content_ratio = np.sum(content_mask) / total_pixels
+
+        print(f"  [Auto-Analyze] Image characteristics:")
+        print(f"    Dark areas:  {dark_ratio:.1%}")
+        print(f"    Mid-tones:   {mid_ratio:.1%}")
+        print(f"    Light areas: {light_ratio:.1%}")
+        print(f"    Edge density: {edge_ratio:.1%}")
+        print(f"    Content ratio: {content_ratio:.1%}")
+
+        # --- Determine optimal phase weights ---
+        # Phase 1 (Lines): Boost if edge-heavy image
+        if edge_ratio > 0.08:
+            self.config.phase_1_weight = 1.0
+        else:
+            self.config.phase_1_weight = 0.8
+
+        # Phase 2 (Shading): Boost if lots of mid-tones
+        if mid_ratio > 0.3:
+            self.config.phase_2_weight = 1.0
+        elif mid_ratio > 0.15:
+            self.config.phase_2_weight = 0.8
+        else:
+            self.config.phase_2_weight = 0.5
+
+        # Phase 3 (Dark areas): Boost if lots of dark content
+        if dark_ratio > 0.25:
+            self.config.phase_3_weight = 1.0
+        elif dark_ratio > 0.1:
+            self.config.phase_3_weight = 0.8
+        else:
+            self.config.phase_3_weight = 0.6
+
+        # --- Auto-detect if merge is beneficial ---
+        # Merge shading phases for "medium-level" images (not too dark, not too light)
+        if not self.config.merge_shading_phases:
+            # Auto-suggest merge if mid-tones dominate and darks are moderate
+            if mid_ratio > 0.25 and dark_ratio < 0.15:
+                self.config.merge_shading_phases = True
+                print(f"    Auto-enabling phase merge (mid-tone dominant image)")
+
+        # --- Adjust engine parameters based on image ---
+        # More shadow passes for darker images
+        if dark_ratio > 0.3:
+            self.config.shadow_passes = min(5, self.config.shadow_passes + 1)
+        elif dark_ratio < 0.1:
+            self.config.shadow_passes = max(1, self.config.shadow_passes - 1)
+
+        # Gradient smoothness: smoother for images with gradual transitions
+        contrast = np.std(gray[content_mask]) if np.any(content_mask) else 50
+        if contrast < 40:
+            self.config.gradient_smoothness = min(1.0, self.config.gradient_smoothness + 0.1)
+        elif contrast > 70:
+            self.config.gradient_smoothness = max(0.3, self.config.gradient_smoothness - 0.1)
+
+        # Contour sensitivity: boost for edge-rich images
+        if edge_ratio > 0.1:
+            self.config.contour_sensitivity = min(1.0, self.config.contour_sensitivity + 0.15)
+        elif edge_ratio < 0.03:
+            self.config.contour_sensitivity = max(0.2, self.config.contour_sensitivity - 0.1)
+
+        print(f"  [Auto-Analyze] Optimized settings:")
+        print(f"    Phase weights: Lines={self.config.phase_1_weight:.2f}, "
+              f"Shading={self.config.phase_2_weight:.2f}, "
+              f"Dark={self.config.phase_3_weight:.2f}")
+        print(f"    Merge phases: {self.config.merge_shading_phases}")
+        print(f"    Shadow passes: {self.config.shadow_passes}")
+        print(f"    Gradient smoothness: {self.config.gradient_smoothness:.2f}")
+        print(f"    Contour sensitivity: {self.config.contour_sensitivity:.2f}")
 
     # ═══════════════════════════════════════════════════════
     # PUBLIC API - Compatible with simulation framework

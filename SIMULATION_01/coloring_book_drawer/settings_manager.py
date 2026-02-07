@@ -77,6 +77,11 @@ class SettingsManager:
             "brush_softness_contour": 0.3,
             "brush_softness_shading": 0.7,
             "pressure_variation": 0.5,
+            "phase_1_weight": 1.0,
+            "phase_2_weight": 0.8,
+            "phase_3_weight": 1.0,
+            "merge_shading_phases": False,
+            "auto_analyze": False,
             
             # Engine 3D: Zone Progressive settings
             "zp_num_zones": 10,

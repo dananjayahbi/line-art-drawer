@@ -30,12 +30,12 @@ BRUSH_PRESETS: Dict[str, BrushConfig] = {
         edge_jitter=0.0
     ),
     'gradient': BrushConfig(
-        softness=0.8,
-        opacity_base=0.6,
-        pressure_range=(0.4, 0.8),
-        size_multiplier=1.5,
+        softness=0.6,
+        opacity_base=0.8,
+        pressure_range=(0.5, 0.9),
+        size_multiplier=1.3,
         texture_overlay=True,
-        edge_jitter=0.5
+        edge_jitter=0.3
     ),
     'texture': BrushConfig(
         softness=0.4,
@@ -106,6 +106,20 @@ class AdvancedGradientConfig:
     phase_4_pct: float = 0.25   # Shadow Depth (25%)
     phase_5_pct: float = 0.08   # Final Details (8%)
     phase_6_pct: float = 0.02   # Enhancement (2%)
+    
+    # Per-phase weight controls (controls how strongly each phase reveals pixels)
+    # Phase 1: Lines only (contours + edges, no shading)
+    phase_1_weight: float = 1.0    # Weight for line drawing phase
+    # Phase 2: Light shading (gradient fills, highlights)
+    phase_2_weight: float = 0.8    # Weight for shading phase
+    # Phase 3: Dark areas + finishing (shadows, textures, final details)
+    phase_3_weight: float = 1.0    # Weight for dark areas & finishing phase
+    
+    # Phase merge option: combine phases 2+3 for medium-level images
+    merge_shading_phases: bool = False  # When True, phases 2+3 run as one combined phase
+    
+    # Auto-analyze: let the software analyze the image and set optimal settings
+    auto_analyze: bool = False     # Enable auto-analysis before simulation
 
     def get_brush_preset(self, phase_name: str) -> BrushConfig:
         """Get brush preset for a named phase."""

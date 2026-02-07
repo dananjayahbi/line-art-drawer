@@ -102,6 +102,11 @@ class ControlPanel(QMainWindow):
         self.brush_softness_contour = 0.3
         self.brush_softness_shading = 0.7
         self.pressure_variation = 0.5
+        self.phase_1_weight = 1.0
+        self.phase_2_weight = 0.8
+        self.phase_3_weight = 1.0
+        self.merge_shading_phases = False
+        self.auto_analyze = False
         
         # Frame border settings
         self.frame_thickness = 6.0
@@ -181,6 +186,11 @@ class ControlPanel(QMainWindow):
         self.brush_softness_contour = float(settings.get("brush_softness_contour", 0.3))
         self.brush_softness_shading = float(settings.get("brush_softness_shading", 0.7))
         self.pressure_variation = float(settings.get("pressure_variation", 0.5))
+        self.phase_1_weight = float(settings.get("phase_1_weight", 1.0))
+        self.phase_2_weight = float(settings.get("phase_2_weight", 0.8))
+        self.phase_3_weight = float(settings.get("phase_3_weight", 1.0))
+        self.merge_shading_phases = str(settings.get("merge_shading_phases", "false")).lower() == "true"
+        self.auto_analyze = str(settings.get("auto_analyze", "false")).lower() == "true"
         
         # Zone Progressive Engine settings (Engine 3D)
         self.zp_num_zones = int(settings.get("zp_num_zones", 10))
@@ -303,6 +313,11 @@ class ControlPanel(QMainWindow):
             "brush_softness_contour": str(self.ag_brush_contour_slider.value() / 10.0),
             "brush_softness_shading": str(self.ag_brush_shading_slider.value() / 10.0),
             "pressure_variation": str(self.ag_pressure_slider.value() / 10.0),
+            "phase_1_weight": str(self.ag_phase_1_weight_slider.value() / 10.0),
+            "phase_2_weight": str(self.ag_phase_2_weight_slider.value() / 10.0),
+            "phase_3_weight": str(self.ag_phase_3_weight_slider.value() / 10.0),
+            "merge_shading_phases": str(self.ag_merge_shading_checkbox.isChecked()),
+            "auto_analyze": str(self.ag_auto_analyze_checkbox.isChecked()),
             # Zone Progressive Engine settings (Engine 3D)
             "zp_num_zones": str(self.zp_num_zones_slider.value()),
             "zp_saliency_threshold": str(self.zp_saliency_slider.value() / 10.0),
@@ -1151,6 +1166,45 @@ class ControlPanel(QMainWindow):
                            "How much stroke pressure varies (0=uniform, 1=high variation)",
                            "ag_pressure", self.pressure_variation,
                            min_val=0, max_val=10, divisor=10.0, suffix="")
+        
+        # --- Separator ---
+        from PySide6.QtWidgets import QFrame as QFrameSep
+        separator = QFrameSep()
+        separator.setFrameShape(QFrameSep.Shape.HLine)
+        separator.setFrameShadow(QFrameSep.Shadow.Sunken)
+        group_layout.addWidget(separator)
+        
+        phase_label = QLabel("Phase Weight Controls")
+        phase_label.setStyleSheet("font-weight: bold; font-size: 13px; margin-top: 5px;")
+        group_layout.addWidget(phase_label)
+
+        # --- Phase 1 Weight (Lines) ---
+        self._add_ag_slider(group_layout, "Phase 1 Weight (Lines):",
+                           "How strongly line-drawing strokes reveal pixels (contours + edges)",
+                           "ag_phase_1_weight", self.phase_1_weight,
+                           min_val=0, max_val=10, divisor=10.0, suffix="")
+
+        # --- Phase 2 Weight (Shading) ---
+        self._add_ag_slider(group_layout, "Phase 2 Weight (Shading):",
+                           "How strongly shading strokes reveal pixels (gradients + textures)",
+                           "ag_phase_2_weight", self.phase_2_weight,
+                           min_val=0, max_val=10, divisor=10.0, suffix="")
+
+        # --- Phase 3 Weight (Dark Areas) ---
+        self._add_ag_slider(group_layout, "Phase 3 Weight (Dark Areas):",
+                           "How strongly dark area strokes reveal pixels (shadows + finishing)",
+                           "ag_phase_3_weight", self.phase_3_weight,
+                           min_val=0, max_val=10, divisor=10.0, suffix="")
+
+        # --- Merge Shading Phases ---
+        self.ag_merge_shading_checkbox = QCheckBox("Merge Shading Phases (combine phases 2+3 for medium-level images)")
+        self.ag_merge_shading_checkbox.setChecked(self.merge_shading_phases)
+        group_layout.addWidget(self.ag_merge_shading_checkbox)
+
+        # --- Auto-Analyze ---
+        self.ag_auto_analyze_checkbox = QCheckBox("Auto-Analyze Image (automatically set optimal phase weights)")
+        self.ag_auto_analyze_checkbox.setChecked(self.auto_analyze)
+        group_layout.addWidget(self.ag_auto_analyze_checkbox)
         
         layout.addWidget(self.advanced_gradient_settings_group)
     
@@ -2441,7 +2495,12 @@ class ControlPanel(QMainWindow):
             "--shadow-angle-variation", str(self.ag_shadow_angle_slider.value()),
             "--brush-softness-contour", str(self.ag_brush_contour_slider.value() / 10.0),
             "--brush-softness-shading", str(self.ag_brush_shading_slider.value() / 10.0),
-            "--pressure-variation", str(self.ag_pressure_slider.value() / 10.0)
+            "--pressure-variation", str(self.ag_pressure_slider.value() / 10.0),
+            "--phase-1-weight", str(self.ag_phase_1_weight_slider.value() / 10.0),
+            "--phase-2-weight", str(self.ag_phase_2_weight_slider.value() / 10.0),
+            "--phase-3-weight", str(self.ag_phase_3_weight_slider.value() / 10.0),
+            "--merge-shading-phases", str(self.ag_merge_shading_checkbox.isChecked()),
+            "--auto-analyze", str(self.ag_auto_analyze_checkbox.isChecked()),
         ])
         
         # Zone Progressive Engine settings (Engine 3D)

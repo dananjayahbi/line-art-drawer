@@ -39,6 +39,16 @@ class StrokeOrderingSystem:
         Returns:
             Single ordered list of StrokePoints for animation
         """
+        # Check if merge_shading_phases is enabled
+        merge_phases = getattr(self.config, 'merge_shading_phases', False)
+        
+        if merge_phases:
+            return self._build_merged_sequence(stroke_groups)
+        else:
+            return self._build_standard_sequence(stroke_groups)
+
+    def _build_standard_sequence(self, stroke_groups: Dict[str, List[StrokePoint]]) -> List[StrokePoint]:
+        """Standard 6-phase reveal sequence."""
         sequence = []
 
         # ═══════════════════════════════════════════════════════
@@ -54,17 +64,22 @@ class StrokeOrderingSystem:
         # ═══════════════════════════════════════════════════════
         # PHASE 2: Form Building (35% of animation)
         # Light gradient regions - establishes 3D form and lighting
+        # Order: medium-intensity strokes first (most visible),
+        # then expand to lighter and darker areas. Highlights last
+        # since they produce the subtlest visual changes.
         # ═══════════════════════════════════════════════════════
-        highlights = stroke_groups.get('highlight', [])
         gradients = stroke_groups.get('gradient', [])
+        highlights = stroke_groups.get('highlight', [])
 
         phase2 = []
-        if highlights:
-            phase2.extend(highlights)
         if gradients:
-            # Sort gradients: light areas first
-            sorted_gradients = sorted(gradients, key=lambda p: p.intensity)
+            # Sort medium-first: most visually impactful strokes appear first
+            mid_intensity = 0.5
+            sorted_gradients = sorted(gradients, key=lambda p: abs(p.intensity - mid_intensity))
             phase2.extend(sorted_gradients)
+        if highlights:
+            # Highlights last in Phase 2 (they're subtle even with contrast boost)
+            phase2.extend(highlights)
 
         if phase2:
             sequence.extend(phase2)
@@ -112,6 +127,89 @@ class StrokeOrderingSystem:
 
         print(f"  [Ordering] Total ordered sequence: {len(sequence)} points")
         return sequence
+
+    def _build_merged_sequence(self, stroke_groups: Dict[str, List[StrokePoint]]) -> List[StrokePoint]:
+        """
+        Merged phase sequence - combines shading and shadow phases into one.
+        
+        Phase 1: Quick Sketch (contours) - same as standard
+        Phase 2+3 Merged: All shading (highlights + gradients + textures + shadows)
+                          sorted from light to dark for progressive build-up
+        Phase 4: Fine Details - same as standard phase 5
+        Phase 5: Enhancement - same as standard phase 6
+        """
+        sequence = []
+
+        # ═══════════════════════════════════════════════════════
+        # PHASE 1: Quick Sketch - Primary contours
+        # ═══════════════════════════════════════════════════════
+        primary_contours = stroke_groups.get('primary_contour', [])
+        if primary_contours:
+            phase1 = self._cluster_spatially(primary_contours)
+            sequence.extend(phase1)
+            print(f"    Phase 1 (Quick Sketch): {len(phase1)} points")
+
+        # ═══════════════════════════════════════════════════════
+        # PHASE 2+3 MERGED: All Shading (light → dark)
+        # Combines: highlights, gradients, textures, shadows
+        # Sorted by intensity for smooth progressive reveal
+        # ═══════════════════════════════════════════════════════
+        merged_shading = []
+        for group_name in ['highlight', 'gradient', 'texture', 'shadow']:
+            group = stroke_groups.get(group_name, [])
+            merged_shading.extend(group)
+
+        if merged_shading:
+            # Sort all shading strokes from light to dark for natural build-up
+            merged_shading.sort(key=lambda p: p.intensity)
+            # Apply regional clustering within intensity bands
+            merged_phase = self._cluster_by_intensity_bands(merged_shading)
+            sequence.extend(merged_phase)
+            print(f"    Phase 2+3 Merged (All Shading): {len(merged_phase)} points")
+
+        # ═══════════════════════════════════════════════════════
+        # PHASE 4: Fine Details
+        # ═══════════════════════════════════════════════════════
+        details = stroke_groups.get('detail', [])
+        if details:
+            phase4 = self._cluster_spatially(details)
+            sequence.extend(phase4)
+            print(f"    Phase 4 (Fine Details): {len(phase4)} points")
+
+        # ═══════════════════════════════════════════════════════
+        # PHASE 5: Enhancement
+        # ═══════════════════════════════════════════════════════
+        enhancement = stroke_groups.get('enhancement', [])
+        if enhancement:
+            sequence.extend(enhancement)
+            print(f"    Phase 5 (Enhancement): {len(enhancement)} points")
+
+        print(f"  [Ordering] Total merged sequence: {len(sequence)} points")
+        return sequence
+
+    def _cluster_by_intensity_bands(self, strokes: List[StrokePoint]) -> List[StrokePoint]:
+        """
+        Cluster strokes into intensity bands, with spatial clustering within each band.
+        This creates a smooth light-to-dark reveal for merged phases.
+        """
+        if not strokes:
+            return strokes
+
+        # Divide into intensity bands (e.g., 5 bands from light to dark)
+        num_bands = 5
+        bands = [[] for _ in range(num_bands)]
+        for s in strokes:
+            band_idx = min(num_bands - 1, int(s.intensity * num_bands))
+            bands[band_idx].append(s)
+
+        result = []
+        for band in bands:
+            if band:
+                # Spatial clustering within each band
+                clustered = self._cluster_by_region(band)
+                result.extend(clustered)
+
+        return result
 
     def _cluster_spatially(self, strokes: List[StrokePoint]) -> List[StrokePoint]:
         """Cluster strokes spatially to minimize pen jumps."""

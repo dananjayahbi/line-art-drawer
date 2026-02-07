@@ -232,6 +232,9 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                  texture_detection_strength=0.6, shadow_passes=3,
                  shadow_angle_variation=30.0, brush_softness_contour=0.3,
                  brush_softness_shading=0.7, pressure_variation=0.5,
+                 phase_1_weight=1.0, phase_2_weight=0.8,
+                 phase_3_weight=1.0, merge_shading_phases=False,
+                 auto_analyze=False,
                  zp_num_zones=10, zp_saliency_threshold=0.3,
                  zp_max_focal_points=5, zp_animation_mode="multi_focal",
                  zp_transition_width=0.1, zp_stroke_density=0.8,
@@ -281,6 +284,11 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.brush_softness_contour = brush_softness_contour
         self.brush_softness_shading = brush_softness_shading
         self.pressure_variation = pressure_variation
+        self.phase_1_weight = phase_1_weight
+        self.phase_2_weight = phase_2_weight
+        self.phase_3_weight = phase_3_weight
+        self.merge_shading_phases = merge_shading_phases
+        self.auto_analyze = auto_analyze
         
         # Zone Progressive Engine (Engine 3D) settings
         self.zp_num_zones = zp_num_zones
@@ -412,6 +420,11 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                             brush_softness_contour=self.brush_softness_contour,
                             brush_softness_shading=self.brush_softness_shading,
                             pressure_variation=self.pressure_variation,
+                            phase_1_weight=self.phase_1_weight,
+                            phase_2_weight=self.phase_2_weight,
+                            phase_3_weight=self.phase_3_weight,
+                            merge_shading_phases=self.merge_shading_phases,
+                            auto_analyze=self.auto_analyze,
                         )
                         
                         # Process with loading screen (Engine 3 is slow like Engine 2)
@@ -882,6 +895,16 @@ def main():
                         help="Engine 3: Brush softness for shading strokes (0.0-1.0)")
     parser.add_argument("--pressure-variation", type=float, default=0.5,
                         help="Engine 3: Stroke pressure variation (0.0-1.0)")
+    parser.add_argument("--phase-1-weight", type=float, default=1.0,
+                        help="Engine 3: Phase 1 (Lines) reveal weight (0.0-1.0)")
+    parser.add_argument("--phase-2-weight", type=float, default=0.8,
+                        help="Engine 3: Phase 2 (Shading) reveal weight (0.0-1.0)")
+    parser.add_argument("--phase-3-weight", type=float, default=1.0,
+                        help="Engine 3: Phase 3 (Dark areas) reveal weight (0.0-1.0)")
+    parser.add_argument("--merge-shading-phases", type=str, default="False",
+                        help="Engine 3: Merge shading phases 2+3 for medium images")
+    parser.add_argument("--auto-analyze", type=str, default="False",
+                        help="Engine 3: Auto-analyze image for optimal settings")
     
     # Zone Progressive Engine (Engine 3D) options
     parser.add_argument("--zp-num-zones", type=int, default=10,
@@ -988,6 +1011,11 @@ def main():
         brush_softness_contour=args.brush_softness_contour,
         brush_softness_shading=args.brush_softness_shading,
         pressure_variation=args.pressure_variation,
+        phase_1_weight=args.phase_1_weight,
+        phase_2_weight=args.phase_2_weight,
+        phase_3_weight=args.phase_3_weight,
+        merge_shading_phases=str(args.merge_shading_phases).lower() == "true",
+        auto_analyze=str(args.auto_analyze).lower() == "true",
         # Zone Progressive Engine (Engine 3D) options
         zp_num_zones=args.zp_num_zones,
         zp_saliency_threshold=args.zp_saliency_threshold,
