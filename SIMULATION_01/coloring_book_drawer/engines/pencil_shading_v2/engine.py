@@ -1271,22 +1271,25 @@ class PencilShadingEngine:
         """
         Merge all stroke sequences into a single reveal sequence.
         
-        V2 Fix 6: Zone-interleaved drawing — instead of drawing all outlines
-        then all hatching then all cross-hatching (which creates visible "waves"),
-        the canvas is divided into spatial zones and all phases are interleaved
-        within each zone. Each area gets fully "finished" before moving on,
-        exactly like a real artist works section by section.
+        V2 Fix 6 (Refined): Stroke-group interleaved drawing.
         
-        Falls back to sequential mode if edge_phases_first > 1 (for compatibility).
+        Instead of rigid rectangular zones (which create visible square blocks),
+        this approach:
+        1. Groups strokes by their centroid into loose spatial clusters
+        2. Traverses clusters using greedy nearest-neighbor (no rigid grid)
+        3. Interleaves all phases within each cluster
+        4. Keeps individual strokes intact (never splits a stroke across zones)
+        
+        The result looks like an artist working section-by-section, building up
+        each area's outlines + shading together before moving on — without
+        visible rectangular boundaries.
         """
         from collections import defaultdict
+        import random as rand_module
         
-        print(f"\n  Merging sequences (zone-interleaved, shading_order={self.shading_order})")
+        print(f"\n  Merging sequences (stroke-group interleaved, shading_order={self.shading_order})")
         
-        # Zone size in pixels (may be scaled by Fix 7)
-        zone_size = getattr(self, '_scaled_zone_size', 80)
-        
-        # Phase ordering within each zone
+        # Phase ordering within each cluster
         phase_order = [
             DrawingPhase.OUTLINE,
             DrawingPhase.HATCHING,
@@ -1294,49 +1297,121 @@ class PencilShadingEngine:
             DrawingPhase.DETAIL_SHADING,
         ]
         
-        # Bucket all strokes by zone AND phase
-        zones = defaultdict(lambda: defaultdict(list))
+        # Step 1: Collect all strokes as contiguous groups (not individual points)
+        # For outline phase, strokes are already grouped by _build_outline_strokes
+        # For hatching phases, strokes were returned as lists from _generate_hatching_strokes
+        # But by the time they reach here, they've been flattened into point lists.
+        # We need to re-segment them by detecting pen lifts (large gaps between consecutive points).
+        
+        phase_stroke_groups = {}
+        pen_lift_threshold = getattr(self, '_scaled_pen_lift_threshold', 15.0)
         
         for phase in phase_order:
-            for point in self.stroke_sequences[phase]:
-                zx = int(point.x // zone_size)
-                zy = int(point.y // zone_size)
-                zones[(zy, zx)][phase].append(point)
-        
-        # Sort zone keys in serpentine pattern (row by row, alternating direction)
-        sorted_zone_keys = sorted(
-            zones.keys(), 
-            key=lambda k: (k[0], k[1] if k[0] % 2 == 0 else -k[1])
-        )
-        
-        self.reveal_sequence = []
-        zone_count = 0
-        
-        for zone_key in sorted_zone_keys:
-            zone = zones[zone_key]
-            zone_count += 1
+            points = self.stroke_sequences[phase]
+            if not points:
+                phase_stroke_groups[phase] = []
+                continue
             
-            # Within each zone: draw all phases in order
+            # Re-segment into stroke groups by detecting pen lifts
+            groups = []
+            current_group = [points[0]]
+            
+            for i in range(1, len(points)):
+                dist = math.sqrt((points[i].x - points[i-1].x)**2 + 
+                                (points[i].y - points[i-1].y)**2)
+                if dist > pen_lift_threshold:
+                    if current_group:
+                        groups.append(current_group)
+                    current_group = [points[i]]
+                else:
+                    current_group.append(points[i])
+            
+            if current_group:
+                groups.append(current_group)
+            
+            phase_stroke_groups[phase] = groups
+        
+        # Step 2: Compute centroid for each stroke group
+        all_stroke_entries = []  # (centroid_x, centroid_y, phase, group_points)
+        
+        for phase in phase_order:
+            for group in phase_stroke_groups[phase]:
+                if not group:
+                    continue
+                cx = sum(p.x for p in group) / len(group)
+                cy = sum(p.y for p in group) / len(group)
+                all_stroke_entries.append((cx, cy, phase, group))
+        
+        if not all_stroke_entries:
+            self.reveal_sequence = []
+            print("  No strokes to merge.")
+            return
+        
+        # Step 3: Cluster stroke groups into spatial bins (larger zones, ~150px)
+        zone_size = max(80, getattr(self, '_scaled_zone_size', 80) * 2)
+        clusters = defaultdict(lambda: defaultdict(list))
+        
+        for cx, cy, phase, group in all_stroke_entries:
+            # Use larger zones with some jitter to avoid sharp grid boundaries
+            zx = int(cx // zone_size)
+            zy = int(cy // zone_size)
+            clusters[(zy, zx)][phase].append((cx, cy, group))
+        
+        # Step 4: Traverse clusters using greedy nearest-neighbor
+        # Start from the cluster nearest top-left
+        remaining_keys = set(clusters.keys())
+        
+        if not remaining_keys:
+            self.reveal_sequence = []
+            return
+        
+        # Find starting cluster (nearest to top-left corner)
+        start_key = min(remaining_keys, key=lambda k: (k[0] * zone_size)**2 + (k[1] * zone_size)**2)
+        
+        ordered_keys = []
+        current_key = start_key
+        
+        while remaining_keys:
+            ordered_keys.append(current_key)
+            remaining_keys.discard(current_key)
+            
+            if not remaining_keys:
+                break
+            
+            # Find nearest remaining cluster
+            cur_cy, cur_cx = current_key
+            current_key = min(remaining_keys, 
+                            key=lambda k: (k[0] - cur_cy)**2 + (k[1] - cur_cx)**2)
+        
+        # Step 5: Build reveal sequence — within each cluster, interleave phases
+        self.reveal_sequence = []
+        rng = rand_module.Random(42)
+        
+        for cluster_key in ordered_keys:
+            cluster = clusters[cluster_key]
+            
             for phase in phase_order:
-                if phase in zone and zone[phase]:
-                    points = zone[phase]
-                    
-                    # Sort within zone based on shading_order
-                    if self.shading_order == "top_to_bottom":
-                        points.sort(key=lambda p: (p.y, p.x))
-                    elif self.shading_order == "random":
-                        import random
-                        random.shuffle(points)
-                    # "natural" keeps as-is
-                    
-                    self.reveal_sequence.extend(points)
+                if phase not in cluster or not cluster[phase]:
+                    continue
+                
+                stroke_entries = cluster[phase]
+                
+                # Sort strokes within cluster by position for natural flow
+                if self.shading_order == "top_to_bottom":
+                    stroke_entries.sort(key=lambda e: (e[1], e[0]))  # by cy, cx
+                elif self.shading_order == "random":
+                    rng.shuffle(stroke_entries)
+                # "natural" keeps as-is
+                
+                for cx, cy, group in stroke_entries:
+                    self.reveal_sequence.extend(group)
         
         # Count per phase for reporting
         phase_counts = defaultdict(int)
         for point in self.reveal_sequence:
             phase_counts[point.phase.name] += 1
         
-        print(f"  Total reveal sequence: {len(self.reveal_sequence)} points across {zone_count} zones")
+        print(f"  Total reveal sequence: {len(self.reveal_sequence)} points across {len(ordered_keys)} clusters")
         for phase_name, count in phase_counts.items():
             print(f"    - {phase_name}: {count} points")
     
