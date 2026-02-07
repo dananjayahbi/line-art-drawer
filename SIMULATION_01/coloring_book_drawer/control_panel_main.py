@@ -91,7 +91,7 @@ class ControlPanel(QMainWindow):
         self.shading_order = "top_to_bottom"  # "top_to_bottom", "natural", "random"
         
         # Engine selection
-        self.engine_type = "auto"  # "auto", "pixel_reveal", "pencil_shading", "advanced_gradient"
+        self.engine_type = "auto"  # "auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "hybrid_multi"
         
         # Advanced Gradient Engine settings (Engine 3)
         self.contour_sensitivity = 0.5
@@ -199,6 +199,14 @@ class ControlPanel(QMainWindow):
         self.ab_paper_texture_strength = float(settings.get("ab_paper_texture_strength", 0.5))
         self.ab_pressure_variation = float(settings.get("ab_pressure_variation", 0.5))
         self.ab_graphite_buildup = float(settings.get("ab_graphite_buildup", 0.7))
+        
+        # Hybrid Multi-Strategy Engine settings (Engine 3F)
+        self.hm_num_segments = int(settings.get("hm_num_segments", 100))
+        self.hm_min_region_area = int(settings.get("hm_min_region_area", 500))
+        self.hm_transition_width = int(settings.get("hm_transition_width", 10))
+        self.hm_blend_smoothness = float(settings.get("hm_blend_smoothness", 0.7))
+        self.hm_strategy_mode = settings.get("hm_strategy_mode", "auto")
+        self.hm_focal_detection = settings.get("hm_focal_detection", True)
     
     def _get_shading_order_display(self) -> str:
         """Convert internal shading order value to display text."""
@@ -226,7 +234,8 @@ class ControlPanel(QMainWindow):
             2: "pencil_shading",
             3: "advanced_gradient",
             4: "zone_progressive",
-            5: "adaptive_brush"
+            5: "adaptive_brush",
+            6: "hybrid_multi"
         }
         return engine_map.get(index, "auto")
     
@@ -238,7 +247,8 @@ class ControlPanel(QMainWindow):
             "pencil_shading": 2,
             "advanced_gradient": 3,
             "zone_progressive": 4,
-            "adaptive_brush": 5
+            "adaptive_brush": 5,
+            "hybrid_multi": 6
         }
         return index_map.get(engine_type, 0)
     
@@ -308,7 +318,14 @@ class ControlPanel(QMainWindow):
             "ab_paper_type": self._get_ab_paper_type_value(self.ab_paper_type_combo.currentText()),
             "ab_paper_texture_strength": str(self.ab_texture_strength_slider.value() / 10.0),
             "ab_pressure_variation": str(self.ab_pressure_variation_slider.value() / 10.0),
-            "ab_graphite_buildup": str(self.ab_graphite_buildup_slider.value() / 10.0)
+            "ab_graphite_buildup": str(self.ab_graphite_buildup_slider.value() / 10.0),
+            # Hybrid Multi-Strategy Engine settings (Engine 3F)
+            "hm_num_segments": str(self.hm_num_segments_slider.value()),
+            "hm_min_region_area": str(self.hm_min_area_slider.value()),
+            "hm_transition_width": str(self.hm_transition_width_slider.value()),
+            "hm_blend_smoothness": str(self.hm_blend_smoothness_slider.value() / 20.0),
+            "hm_strategy_mode": self._get_hm_strategy_mode_value(self.hm_strategy_mode_combo.currentText()),
+            "hm_focal_detection": self.hm_focal_detection_checkbox.isChecked()
         }
         
         if self.settings_manager.save_settings(settings):
@@ -844,7 +861,8 @@ class ControlPanel(QMainWindow):
             "• Engine 2 - Pencil Shading: Hatching-based shading\n"
             "• Engine 3 - Advanced Gradient: Direction-aware gradient shading\n"
             "• Engine 3D - Zone Progressive: Focal-point-first dramatic reveal\n"
-            "• Engine 3E - Adaptive Brush: Physics-based pencil simulation"
+            "• Engine 3E - Adaptive Brush: Physics-based pencil simulation\n"
+            "• Engine 3F - Hybrid Multi-Strategy: Multi-strategy region-based rendering"
         )
         self.engine_type_combo = QComboBox()
         self.engine_type_combo.addItems([
@@ -853,7 +871,8 @@ class ControlPanel(QMainWindow):
             "🎨 Engine 2: Pencil Shading",
             "🌈 Engine 3: Advanced Gradient",
             "🎯 Engine 3D: Zone Progressive",
-            "🖊️ Engine 3E: Adaptive Brush"
+            "🖊️ Engine 3E: Adaptive Brush",
+            "🔀 Engine 3F: Hybrid Multi-Strategy"
         ])
         self.engine_type_combo.setCurrentIndex(self._get_engine_type_index(self.engine_type))
         self.engine_type_combo.setMinimumWidth(200)
@@ -1402,6 +1421,105 @@ class ControlPanel(QMainWindow):
         group_layout.addLayout(buildup_layout)
         
         layout.addWidget(self.adaptive_brush_settings_group)
+        
+        # Engine 3F: Hybrid Multi-Strategy settings
+        self._create_hybrid_multi_settings(layout)
+    
+    def _create_hybrid_multi_settings(self, layout):
+        """Create Engine 3F: Hybrid Multi-Strategy settings controls."""
+        
+        self.hybrid_multi_settings_group = QGroupBox("🔀 Hybrid Multi-Strategy Engine Settings")
+        group_layout = QVBoxLayout(self.hybrid_multi_settings_group)
+        group_layout.setSpacing(8)
+        
+        # Segments slider (int, 20-500, default 100)
+        seg_layout = QHBoxLayout()
+        seg_label = QLabel("Segments:")
+        self.hm_num_segments_slider = QSlider(Qt.Orientation.Horizontal)
+        self.hm_num_segments_slider.setRange(20, 500)
+        self.hm_num_segments_slider.setValue(self.hm_num_segments)
+        self.hm_num_segments_value = QLabel(str(self.hm_num_segments))
+        self.hm_num_segments_slider.valueChanged.connect(
+            lambda v: self.hm_num_segments_value.setText(str(v)))
+        seg_layout.addWidget(seg_label)
+        seg_layout.addWidget(self.hm_num_segments_slider)
+        seg_layout.addWidget(self.hm_num_segments_value)
+        group_layout.addLayout(seg_layout)
+        
+        # Min Region Area slider (int, 100-5000, default 500)
+        area_layout = QHBoxLayout()
+        area_label = QLabel("Min Region Area:")
+        self.hm_min_area_slider = QSlider(Qt.Orientation.Horizontal)
+        self.hm_min_area_slider.setRange(100, 5000)
+        self.hm_min_area_slider.setValue(self.hm_min_region_area)
+        self.hm_min_area_value = QLabel(str(self.hm_min_region_area))
+        self.hm_min_area_slider.valueChanged.connect(
+            lambda v: self.hm_min_area_value.setText(str(v)))
+        area_layout.addWidget(area_label)
+        area_layout.addWidget(self.hm_min_area_slider)
+        area_layout.addWidget(self.hm_min_area_value)
+        group_layout.addLayout(area_layout)
+        
+        # Transition Width slider (int, 1-50, default 10)
+        tw_layout = QHBoxLayout()
+        tw_label = QLabel("Transition Width:")
+        self.hm_transition_width_slider = QSlider(Qt.Orientation.Horizontal)
+        self.hm_transition_width_slider.setRange(1, 50)
+        self.hm_transition_width_slider.setValue(self.hm_transition_width)
+        self.hm_transition_width_value = QLabel(str(self.hm_transition_width))
+        self.hm_transition_width_slider.valueChanged.connect(
+            lambda v: self.hm_transition_width_value.setText(str(v)))
+        tw_layout.addWidget(tw_label)
+        tw_layout.addWidget(self.hm_transition_width_slider)
+        tw_layout.addWidget(self.hm_transition_width_value)
+        group_layout.addLayout(tw_layout)
+        
+        # Blend Smoothness slider (float, 0.0-1.0, step 0.05, default 0.7)
+        bs_layout = QHBoxLayout()
+        bs_label = QLabel("Blend Smoothness:")
+        self.hm_blend_smoothness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.hm_blend_smoothness_slider.setRange(0, 20)  # 0.0 to 1.0 in steps of 0.05
+        self.hm_blend_smoothness_slider.setValue(int(self.hm_blend_smoothness * 20))
+        self.hm_blend_smoothness_value = QLabel(f"{self.hm_blend_smoothness:.2f}")
+        self.hm_blend_smoothness_slider.valueChanged.connect(
+            lambda v: self.hm_blend_smoothness_value.setText(f"{v / 20.0:.2f}"))
+        bs_layout.addWidget(bs_label)
+        bs_layout.addWidget(self.hm_blend_smoothness_slider)
+        bs_layout.addWidget(self.hm_blend_smoothness_value)
+        group_layout.addLayout(bs_layout)
+        
+        # Strategy Mode combo
+        mode_layout = QHBoxLayout()
+        mode_label = QLabel("Strategy Mode:")
+        self.hm_strategy_mode_combo = QComboBox()
+        self.hm_strategy_mode_combo.addItems(["Auto", "Gradient Only", "Brush Only", "Full"])
+        self.hm_strategy_mode_combo.setCurrentText(self._get_hm_strategy_mode_display(self.hm_strategy_mode))
+        mode_layout.addWidget(mode_label)
+        mode_layout.addStretch()
+        mode_layout.addWidget(self.hm_strategy_mode_combo)
+        group_layout.addLayout(mode_layout)
+        
+        # Focal Detection checkbox
+        focal_layout = QHBoxLayout()
+        focal_label = QLabel("Focal Detection:")
+        self.hm_focal_detection_checkbox = QCheckBox()
+        self.hm_focal_detection_checkbox.setChecked(self.hm_focal_detection)
+        focal_layout.addWidget(focal_label)
+        focal_layout.addStretch()
+        focal_layout.addWidget(self.hm_focal_detection_checkbox)
+        group_layout.addLayout(focal_layout)
+        
+        layout.addWidget(self.hybrid_multi_settings_group)
+    
+    def _get_hm_strategy_mode_value(self, display_text: str) -> str:
+        """Convert display text to internal strategy mode value."""
+        mode_map = {"Auto": "auto", "Gradient Only": "gradient_only", "Brush Only": "brush_only", "Full": "full"}
+        return mode_map.get(display_text, "auto")
+    
+    def _get_hm_strategy_mode_display(self, mode: str) -> str:
+        """Convert internal strategy mode to display text."""
+        display_map = {"auto": "Auto", "gradient_only": "Gradient Only", "brush_only": "Brush Only", "full": "Full"}
+        return display_map.get(mode, "Auto")
     
     def _get_ab_tip_shape_value(self, display_text: str) -> str:
         """Convert display text to internal tip shape value."""
@@ -1467,6 +1585,11 @@ class ControlPanel(QMainWindow):
         if hasattr(self, 'adaptive_brush_settings_group'):
             # Show for Auto-detect (0), or Engine 3E (5)
             self.adaptive_brush_settings_group.setVisible(index in (0, 5))
+        
+        # Engine 3F (Hybrid Multi-Strategy) settings
+        if hasattr(self, 'hybrid_multi_settings_group'):
+            # Show for Auto-detect (0), or Engine 3F (6)
+            self.hybrid_multi_settings_group.setVisible(index in (0, 6))
     
     def _update_engine_description(self, index: int):
         """Update the engine description label based on selection."""
@@ -1482,7 +1605,9 @@ class ControlPanel(QMainWindow):
             4: "🎯 Engine 3D (Zone Progressive): Reveals artwork from visually important regions "
                "outward. Best for portraits, centered compositions, and dramatic reveals.",
             5: "🖊️ Engine 3E (Adaptive Brush): Physics-based pencil simulation with realistic tip, "
-               "paper texture, and pressure dynamics. Best for organic, hand-drawn appearance."
+               "paper texture, and pressure dynamics. Best for organic, hand-drawn appearance.",
+            6: "🔀 Engine 3F (Hybrid Multi-Strategy): Multi-strategy region-based rendering that "
+               "segments the image and applies the best engine per region. Best for complex mixed-content artwork."
         }
         if hasattr(self, 'engine_description_label'):
             self.engine_description_label.setText(descriptions.get(index, ""))
@@ -2179,6 +2304,14 @@ class ControlPanel(QMainWindow):
         self.ab_pressure_variation_slider.setValue(int(self.ab_pressure_variation * 10))
         self.ab_graphite_buildup_slider.setValue(int(self.ab_graphite_buildup * 10))
         
+        # Hybrid Multi-Strategy Engine settings (Engine 3F)
+        self.hm_num_segments_slider.setValue(self.hm_num_segments)
+        self.hm_min_area_slider.setValue(self.hm_min_region_area)
+        self.hm_transition_width_slider.setValue(self.hm_transition_width)
+        self.hm_blend_smoothness_slider.setValue(int(self.hm_blend_smoothness * 20))
+        self.hm_strategy_mode_combo.setCurrentText(self._get_hm_strategy_mode_display(self.hm_strategy_mode))
+        self.hm_focal_detection_checkbox.setChecked(self.hm_focal_detection)
+        
         # Update pen status label and preview
         print(f"DEBUG _update_ui_from_settings: use_custom_pen={self.use_custom_pen}, custom_pen_path='{self.custom_pen_path}'")
         if self.use_custom_pen and self.custom_pen_path:
@@ -2331,6 +2464,16 @@ class ControlPanel(QMainWindow):
             "--ab-paper-texture-strength", str(self.ab_texture_strength_slider.value() / 10.0),
             "--ab-pressure-variation", str(self.ab_pressure_variation_slider.value() / 10.0),
             "--ab-graphite-buildup", str(self.ab_graphite_buildup_slider.value() / 10.0)
+        ])
+        
+        # Hybrid Multi-Strategy Engine settings (Engine 3F)
+        cmd.extend([
+            "--hm-num-segments", str(self.hm_num_segments_slider.value()),
+            "--hm-min-region-area", str(self.hm_min_area_slider.value()),
+            "--hm-transition-width", str(self.hm_transition_width_slider.value()),
+            "--hm-blend-smoothness", str(self.hm_blend_smoothness_slider.value() / 20.0),
+            "--hm-strategy-mode", self._get_hm_strategy_mode_value(self.hm_strategy_mode_combo.currentText()),
+            "--hm-focal-detection", str(self.hm_focal_detection_checkbox.isChecked())
         ])
         
         # Launch in thread

@@ -94,7 +94,15 @@ class SettingsManager:
             "ab_paper_type": "cold_press",
             "ab_paper_texture_strength": 0.5,
             "ab_pressure_variation": 0.5,
-            "ab_graphite_buildup": 0.7
+            "ab_graphite_buildup": 0.7,
+            
+            # Engine 3F: Hybrid Multi-Strategy settings
+            "hm_num_segments": 100,
+            "hm_min_region_area": 500,
+            "hm_transition_width": 10,
+            "hm_blend_smoothness": 0.7,
+            "hm_strategy_mode": "auto",
+            "hm_focal_detection": True
         }
     
     def save_settings(self, settings_dict):

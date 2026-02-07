@@ -78,6 +78,14 @@ except ImportError as e:
     HAS_ADAPTIVE_BRUSH = False
     print(f"Adaptive Brush Engine not available: {e}")
 
+# Import Engine 3F - Hybrid Multi-Strategy
+try:
+    from engines.hybrid_multi import HybridMultiEngine
+    HAS_HYBRID_MULTI = True
+except ImportError as e:
+    HAS_HYBRID_MULTI = False
+    print(f"Hybrid Multi-Strategy Engine not available: {e}")
+
 # GPU acceleration - try to import CuPy for CUDA support
 HAS_GPU = False
 GPU_INFO = "No GPU acceleration"
@@ -231,7 +239,10 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                  ab_tip_shape="round", ab_pencil_hardness=0.5,
                  ab_pencil_sharpness=0.7, ab_paper_type="cold_press",
                  ab_paper_texture_strength=0.5, ab_pressure_variation=0.5,
-                 ab_graphite_buildup=0.7):
+                 ab_graphite_buildup=0.7,
+                 hm_num_segments=100, hm_min_region_area=500,
+                 hm_transition_width=10, hm_blend_smoothness=0.7,
+                 hm_strategy_mode="auto", hm_focal_detection=True):
         # FPS is now LOCKED at 60 for all simulations
         super().__init__(width, height, fps=60, title="Coloring Book Drawer")
         
@@ -256,8 +267,9 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.using_advanced_gradient = False  # Will be set during setup
         self.using_zone_progressive = False  # Will be set during setup
         self.using_adaptive_brush = False  # Will be set during setup
+        self.using_hybrid_multi = False  # Will be set during setup
         
-        # Engine type: "auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive", "adaptive_brush"
+        # Engine type: "auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive", "adaptive_brush", "hybrid_multi"
         self.engine_type = engine_type
         
         # Advanced Gradient Engine (Engine 3) settings
@@ -287,6 +299,14 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.ab_paper_texture_strength = ab_paper_texture_strength
         self.ab_pressure_variation = ab_pressure_variation
         self.ab_graphite_buildup = ab_graphite_buildup
+        
+        # Hybrid Multi-Strategy Engine (Engine 3F) settings
+        self.hm_num_segments = hm_num_segments
+        self.hm_min_region_area = hm_min_region_area
+        self.hm_transition_width = hm_transition_width
+        self.hm_blend_smoothness = hm_blend_smoothness
+        self.hm_strategy_mode = hm_strategy_mode
+        self.hm_focal_detection = hm_focal_detection
         
         # Pixel reveal engine (one of two engines will be used)
         self.reveal_engine = None
@@ -364,6 +384,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                     engine_choice = "zone_progressive"
                 elif self.engine_type == "adaptive_brush":
                     engine_choice = "adaptive_brush"
+                elif self.engine_type == "hybrid_multi":
+                    engine_choice = "hybrid_multi"
                 else:
                     engine_choice = self._analyze_and_select_engine()
                 
@@ -452,6 +474,35 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                         # Process with loading screen (stroke extraction + physics)
                         self._process_with_loading_screen()
                 
+                if engine_choice == "hybrid_multi":
+                    if not HAS_HYBRID_MULTI:
+                        print("\n⚠️  Hybrid Multi-Strategy Engine not available, falling back to Pencil Shading")
+                        engine_choice = "shading"
+                    else:
+                        print("\n🔀 Using HYBRID MULTI-STRATEGY ENGINE (Engine 3F)")
+                        self.using_hybrid_multi = True
+                        self.using_adaptive_brush = False
+                        self.using_zone_progressive = False
+                        self.using_advanced_gradient = False
+                        self.using_shading_engine = False
+                        
+                        self.reveal_engine = HybridMultiEngine(
+                            self.image_path,
+                            self.width,
+                            self.height,
+                            padding=40,
+                            use_gpu=self.use_gpu,
+                            num_segments=self.hm_num_segments,
+                            min_region_area=self.hm_min_region_area,
+                            transition_width=self.hm_transition_width,
+                            blend_smoothness=self.hm_blend_smoothness,
+                            strategy_mode=self.hm_strategy_mode,
+                            focal_detection=self.hm_focal_detection,
+                        )
+                        
+                        # Process with loading screen (segmentation + classification + assignment)
+                        self._process_with_loading_screen()
+                
                 if engine_choice == "shading":
                     print("\n🎨 Using PENCIL SHADING ENGINE (for complex artwork)")
                     self.using_shading_engine = True
@@ -489,7 +540,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                     self.reveal_engine.process_image()
                 
                 # Adjust brush scale based on thickness setting (for PixelRevealEngine)
-                if not self.using_shading_engine and not self.using_advanced_gradient and not self.using_zone_progressive and not self.using_adaptive_brush:
+                if not self.using_shading_engine and not self.using_advanced_gradient and not self.using_zone_progressive and not self.using_adaptive_brush and not self.using_hybrid_multi:
                     self.reveal_engine.brush_scale = 1.1 + (self.thickness_scale * 0.3)
                 
                 # Auto-calculate speed if target_duration is set
@@ -631,7 +682,14 @@ class ColoringBookDrawerSimulation(BaseSimulation):
             return
         
         # Total reveal points to process
-        total_points = len(self.reveal_engine.reveal_sequence)
+        # Some engines use reveal_sequence, others don't
+        if hasattr(self.reveal_engine, 'reveal_sequence'):
+            total_points = len(self.reveal_engine.reveal_sequence)
+        else:
+            # For engines without reveal_sequence, estimate from points_per_update
+            # Assume ~300 frames worth of content
+            base_points = self.reveal_engine.get_points_per_update()
+            total_points = base_points * 300
         
         # At 60 FPS, total frames for target duration
         target_frames = int(self.target_duration * 60)
@@ -704,7 +762,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
             return
         
         # Calculate points to reveal this frame based on speed
-        if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive or self.using_adaptive_brush:
+        if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive or self.using_adaptive_brush or self.using_hybrid_multi:
             # Phase/zone-based engines provide their own base speed
             base_points = self.reveal_engine.get_points_per_update()
             points_per_frame = int(base_points * self.speed)
@@ -721,7 +779,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         
         # Update pen position (for visual feedback)
         if has_more and self.show_pen:
-            if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive or self.using_adaptive_brush:
+            if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive or self.using_adaptive_brush or self.using_hybrid_multi:
                 # These engines provide pen position directly
                 self.pen_pos = self.reveal_engine.get_current_pen_position()
                 self.pen_visible = True
@@ -804,7 +862,7 @@ def main():
     
     # Engine selection
     parser.add_argument("--engine-type", type=str, default="auto",
-                        choices=["auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive", "adaptive_brush"],
+                        choices=["auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive", "adaptive_brush", "hybrid_multi"],
                         help="Rendering engine to use (auto = auto-detect)")
     
     # Advanced Gradient Engine (Engine 3) options
@@ -859,6 +917,21 @@ def main():
                         help="Engine 3E: Pressure variation amount (0.0-1.0)")
     parser.add_argument("--ab-graphite-buildup", type=float, default=0.7,
                         help="Engine 3E: Graphite saturation buildup speed (0.0-1.0)")
+    
+    # Hybrid Multi-Strategy Engine (Engine 3F) options
+    parser.add_argument("--hm-num-segments", type=int, default=100,
+                        help="Engine 3F: Number of superpixel segments (20-500)")
+    parser.add_argument("--hm-min-region-area", type=int, default=500,
+                        help="Engine 3F: Minimum region area in pixels (100-5000)")
+    parser.add_argument("--hm-transition-width", type=int, default=10,
+                        help="Engine 3F: Transition zone width in pixels (1-50)")
+    parser.add_argument("--hm-blend-smoothness", type=float, default=0.7,
+                        help="Engine 3F: Boundary blend smoothness (0.0-1.0)")
+    parser.add_argument("--hm-strategy-mode", type=str, default="auto",
+                        choices=["auto", "gradient_only", "brush_only", "full"],
+                        help="Engine 3F: Strategy assignment mode")
+    parser.add_argument("--hm-focal-detection", type=str, default="True",
+                        help="Engine 3F: Enable focal point detection (True/False)")
     
     args = parser.parse_args()
     
@@ -931,6 +1004,13 @@ def main():
         ab_paper_texture_strength=args.ab_paper_texture_strength,
         ab_pressure_variation=args.ab_pressure_variation,
         ab_graphite_buildup=args.ab_graphite_buildup,
+        # Hybrid Multi-Strategy Engine (Engine 3F) options
+        hm_num_segments=args.hm_num_segments,
+        hm_min_region_area=args.hm_min_region_area,
+        hm_transition_width=args.hm_transition_width,
+        hm_blend_smoothness=args.hm_blend_smoothness,
+        hm_strategy_mode=args.hm_strategy_mode,
+        hm_focal_detection=str(args.hm_focal_detection).lower() == "true",
     )
     
     sim.run()
