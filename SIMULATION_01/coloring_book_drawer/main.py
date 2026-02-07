@@ -48,8 +48,8 @@ BASE_DIR = SIMULATION_DIR.parent
 sys.path.insert(0, str(BASE_DIR))
 
 # Import modularized components
-from pixel_reveal_engine import PixelRevealEngine
-from pencil_shading_engine import PencilShadingEngine, DrawingPhase
+from engines.pixel_reveal import PixelRevealEngine
+from engines.pencil_shading import PencilShadingEngine, DrawingPhase
 from pen_renderer import PenRenderer
 from frame_animator import FrameAnimator
 from loading_screen import LoadingScreen, BackgroundProcessor
