@@ -86,6 +86,14 @@ except ImportError as e:
     HAS_HYBRID_MULTI = False
     print(f"Hybrid Multi-Strategy Engine not available: {e}")
 
+# Import Engine 2V2 - Pencil Shading V2 (Enhanced with auto-tune)
+try:
+    from engines.pencil_shading_v2 import PencilShadingEngine as PencilShadingV2Engine
+    HAS_PENCIL_SHADING_V2 = True
+except ImportError as e:
+    HAS_PENCIL_SHADING_V2 = False
+    print(f"Pencil Shading V2 Engine not available: {e}")
+
 # GPU acceleration - try to import CuPy for CUDA support
 HAS_GPU = False
 GPU_INFO = "No GPU acceleration"
@@ -203,12 +211,14 @@ class ColoringBookDrawerSimulation(BaseSimulation):
     Main simulation using pixel-reveal approach.
     Progressively reveals the original image pixels for perfect reproduction.
     
-    ENHANCED: Now supports five rendering engines:
+    ENHANCED: Now supports multiple rendering engines:
     - PixelRevealEngine (Engine 1): For simple line drawings (fast, skeleton-based)
     - PencilShadingEngine (Engine 2): For complex shaded artwork with textures/shadows
+    - PencilShadingV2Engine (Engine 2V2): Enhanced pencil shading with auto-tune & organic strokes
     - AdvancedGradientEngine (Engine 3): For high-contrast pencil art with rich gradients
     - ZoneProgressiveEngine (Engine 3D): Focal-point-first dramatic reveal animation
     - AdaptiveBrushEngine (Engine 3E): Physics-based pencil simulation
+    - HybridMultiEngine (Engine 3F): Multi-strategy region-based rendering
     
     The engine is auto-selected based on image complexity analysis,
     or can be manually selected via the control panel.
@@ -245,7 +255,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                  ab_graphite_buildup=0.7,
                  hm_num_segments=100, hm_min_region_area=500,
                  hm_transition_width=10, hm_blend_smoothness=0.7,
-                 hm_strategy_mode="auto", hm_focal_detection=True):
+                 hm_strategy_mode="auto", hm_focal_detection=True,
+                 ps2_auto_tune=False):
         # FPS is now LOCKED at 60 for all simulations
         super().__init__(width, height, fps=60, title="Coloring Book Drawer")
         
@@ -271,8 +282,9 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.using_zone_progressive = False  # Will be set during setup
         self.using_adaptive_brush = False  # Will be set during setup
         self.using_hybrid_multi = False  # Will be set during setup
+        self.using_pencil_shading_v2 = False  # Will be set during setup
         
-        # Engine type: "auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive", "adaptive_brush", "hybrid_multi"
+        # Engine type: "auto", "pixel_reveal", "pencil_shading", "pencil_shading_v2", "advanced_gradient", "zone_progressive", "adaptive_brush", "hybrid_multi"
         self.engine_type = engine_type
         
         # Advanced Gradient Engine (Engine 3) settings
@@ -315,6 +327,9 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.hm_blend_smoothness = hm_blend_smoothness
         self.hm_strategy_mode = hm_strategy_mode
         self.hm_focal_detection = hm_focal_detection
+        
+        # Pencil Shading V2 Engine (Engine 2V2) settings
+        self.ps2_auto_tune = ps2_auto_tune
         
         # Pixel reveal engine (one of two engines will be used)
         self.reveal_engine = None
@@ -394,6 +409,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                     engine_choice = "adaptive_brush"
                 elif self.engine_type == "hybrid_multi":
                     engine_choice = "hybrid_multi"
+                elif self.engine_type == "pencil_shading_v2":
+                    engine_choice = "pencil_shading_v2"
                 else:
                     engine_choice = self._analyze_and_select_engine()
                 
@@ -516,6 +533,36 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                         # Process with loading screen (segmentation + classification + assignment)
                         self._process_with_loading_screen()
                 
+                if engine_choice == "pencil_shading_v2":
+                    if not HAS_PENCIL_SHADING_V2:
+                        print("\n⚠️  Pencil Shading V2 Engine not available, falling back to Pencil Shading V1")
+                        engine_choice = "shading"
+                    else:
+                        print("\n🎨 Using PENCIL SHADING V2 ENGINE (Engine 2V2 - Enhanced)")
+                        self.using_pencil_shading_v2 = True
+                        self.using_shading_engine = False
+                        self.using_advanced_gradient = False
+                        self.using_zone_progressive = False
+                        self.using_adaptive_brush = False
+                        self.using_hybrid_multi = False
+                        
+                        self.reveal_engine = PencilShadingV2Engine(
+                            self.image_path,
+                            self.width,
+                            self.height,
+                            padding=40,
+                            use_gpu=self.use_gpu,
+                            shade_sensitivity=self.shading_sensitivity,
+                            hatching_angle=self.hatching_angle,
+                            stroke_spacing=self.stroke_spacing,
+                            edge_phases_first=self.edge_phases_first,
+                            shading_order=self.shading_order,
+                            auto_tune=self.ps2_auto_tune,
+                        )
+                        
+                        # Process with loading screen
+                        self._process_with_loading_screen()
+                
                 if engine_choice == "shading":
                     print("\n🎨 Using PENCIL SHADING ENGINE (for complex artwork)")
                     self.using_shading_engine = True
@@ -553,7 +600,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                     self.reveal_engine.process_image()
                 
                 # Adjust brush scale based on thickness setting (for PixelRevealEngine)
-                if not self.using_shading_engine and not self.using_advanced_gradient and not self.using_zone_progressive and not self.using_adaptive_brush and not self.using_hybrid_multi:
+                if not self.using_shading_engine and not self.using_advanced_gradient and not self.using_zone_progressive and not self.using_adaptive_brush and not self.using_hybrid_multi and not self.using_pencil_shading_v2:
                     self.reveal_engine.brush_scale = 1.1 + (self.thickness_scale * 0.3)
                 
                 # Auto-calculate speed if target_duration is set
@@ -775,7 +822,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
             return
         
         # Calculate points to reveal this frame based on speed
-        if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive or self.using_adaptive_brush or self.using_hybrid_multi:
+        if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive or self.using_adaptive_brush or self.using_hybrid_multi or self.using_pencil_shading_v2:
             # Phase/zone-based engines provide their own base speed
             base_points = self.reveal_engine.get_points_per_update()
             points_per_frame = int(base_points * self.speed)
@@ -792,7 +839,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         
         # Update pen position (for visual feedback)
         if has_more and self.show_pen:
-            if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive or self.using_adaptive_brush or self.using_hybrid_multi:
+            if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive or self.using_adaptive_brush or self.using_hybrid_multi or self.using_pencil_shading_v2:
                 # These engines provide pen position directly
                 self.pen_pos = self.reveal_engine.get_current_pen_position()
                 self.pen_visible = True
@@ -875,7 +922,7 @@ def main():
     
     # Engine selection
     parser.add_argument("--engine-type", type=str, default="auto",
-                        choices=["auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive", "adaptive_brush", "hybrid_multi"],
+                        choices=["auto", "pixel_reveal", "pencil_shading", "pencil_shading_v2", "advanced_gradient", "zone_progressive", "adaptive_brush", "hybrid_multi"],
                         help="Rendering engine to use (auto = auto-detect)")
     
     # Advanced Gradient Engine (Engine 3) options
@@ -955,6 +1002,10 @@ def main():
                         help="Engine 3F: Strategy assignment mode")
     parser.add_argument("--hm-focal-detection", type=str, default="True",
                         help="Engine 3F: Enable focal point detection (True/False)")
+    
+    # Pencil Shading V2 Engine (Engine 2V2) options
+    parser.add_argument("--ps2-auto-tune", type=str, default="False",
+                        help="Engine 2V2: Auto-tune parameters based on image analysis (True/False)")
     
     args = parser.parse_args()
     
@@ -1039,6 +1090,8 @@ def main():
         hm_blend_smoothness=args.hm_blend_smoothness,
         hm_strategy_mode=args.hm_strategy_mode,
         hm_focal_detection=str(args.hm_focal_detection).lower() == "true",
+        # Pencil Shading V2 Engine (Engine 2V2) options
+        ps2_auto_tune=str(args.ps2_auto_tune).lower() == "true",
     )
     
     sim.run()

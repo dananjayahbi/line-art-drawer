@@ -91,7 +91,10 @@ class ControlPanel(QMainWindow):
         self.shading_order = "top_to_bottom"  # "top_to_bottom", "natural", "random"
         
         # Engine selection
-        self.engine_type = "auto"  # "auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "hybrid_multi"
+        self.engine_type = "auto"  # "auto", "pixel_reveal", "pencil_shading", "pencil_shading_v2", "advanced_gradient", "hybrid_multi"
+        
+        # Pencil Shading V2 Engine settings (Engine 2V2)
+        self.ps2_auto_tune = False
         
         # Advanced Gradient Engine settings (Engine 3)
         self.contour_sensitivity = 0.5
@@ -217,6 +220,9 @@ class ControlPanel(QMainWindow):
         self.hm_blend_smoothness = float(settings.get("hm_blend_smoothness", 0.7))
         self.hm_strategy_mode = settings.get("hm_strategy_mode", "auto")
         self.hm_focal_detection = settings.get("hm_focal_detection", True)
+        
+        # Pencil Shading V2 Engine settings (Engine 2V2)
+        self.ps2_auto_tune = str(settings.get("ps2_auto_tune", "false")).lower() == "true"
     
     def _get_shading_order_display(self) -> str:
         """Convert internal shading order value to display text."""
@@ -245,7 +251,8 @@ class ControlPanel(QMainWindow):
             3: "advanced_gradient",
             4: "zone_progressive",
             5: "adaptive_brush",
-            6: "hybrid_multi"
+            6: "hybrid_multi",
+            7: "pencil_shading_v2"
         }
         return engine_map.get(index, "auto")
     
@@ -258,7 +265,8 @@ class ControlPanel(QMainWindow):
             "advanced_gradient": 3,
             "zone_progressive": 4,
             "adaptive_brush": 5,
-            "hybrid_multi": 6
+            "hybrid_multi": 6,
+            "pencil_shading_v2": 7
         }
         return index_map.get(engine_type, 0)
     
@@ -340,7 +348,9 @@ class ControlPanel(QMainWindow):
             "hm_transition_width": str(self.hm_transition_width_slider.value()),
             "hm_blend_smoothness": str(self.hm_blend_smoothness_slider.value() / 20.0),
             "hm_strategy_mode": self._get_hm_strategy_mode_value(self.hm_strategy_mode_combo.currentText()),
-            "hm_focal_detection": self.hm_focal_detection_checkbox.isChecked()
+            "hm_focal_detection": self.hm_focal_detection_checkbox.isChecked(),
+            # Pencil Shading V2 Engine settings (Engine 2V2)
+            "ps2_auto_tune": self.ps2_auto_tune_checkbox.isChecked() if hasattr(self, 'ps2_auto_tune_checkbox') else False
         }
         
         if self.settings_manager.save_settings(settings):
@@ -847,6 +857,7 @@ class ControlPanel(QMainWindow):
         self._create_shading_settings(layout)
         self._create_advanced_gradient_settings(layout)
         self._create_zone_progressive_settings(layout)
+        self._create_pencil_shading_v2_settings(layout)
         
         # Set initial visibility based on current engine_type
         self._on_engine_type_changed(self._get_engine_type_index(self.engine_type))
@@ -877,7 +888,8 @@ class ControlPanel(QMainWindow):
             "• Engine 3 - Advanced Gradient: Direction-aware gradient shading\n"
             "• Engine 3D - Zone Progressive: Focal-point-first dramatic reveal\n"
             "• Engine 3E - Adaptive Brush: Physics-based pencil simulation\n"
-            "• Engine 3F - Hybrid Multi-Strategy: Multi-strategy region-based rendering"
+            "• Engine 3F - Hybrid Multi-Strategy: Multi-strategy region-based rendering\n"
+            "• Engine 2V2 - Pencil Shading V2: Enhanced shading with auto-tune & organic strokes"
         )
         self.engine_type_combo = QComboBox()
         self.engine_type_combo.addItems([
@@ -887,7 +899,8 @@ class ControlPanel(QMainWindow):
             "🌈 Engine 3: Advanced Gradient",
             "🎯 Engine 3D: Zone Progressive",
             "🖊️ Engine 3E: Adaptive Brush",
-            "🔀 Engine 3F: Hybrid Multi-Strategy"
+            "🔀 Engine 3F: Hybrid Multi-Strategy",
+            "🎨 Engine 2V2: Pencil Shading V2"
         ])
         self.engine_type_combo.setCurrentIndex(self._get_engine_type_index(self.engine_type))
         self.engine_type_combo.setMinimumWidth(200)
@@ -1615,15 +1628,54 @@ class ControlPanel(QMainWindow):
         }
         return display_map.get(mode, "Multi Focal")
     
+    def _create_pencil_shading_v2_settings(self, layout):
+        """Create Pencil Shading V2 engine-specific settings section."""
+        group = QGroupBox("🎨 Engine 2V2: Pencil Shading V2 Settings")
+        group_layout = QVBoxLayout(group)
+        group_layout.setSpacing(8)
+        
+        # Info label
+        info_label = QLabel(
+            "V2 enhancements: feathered edges, tapered strokes, smoothed sampling, "
+            "natural hand wobble, soft phase thresholds, zone-interleaved drawing, "
+            "resolution-aware scaling, and auto-tuning.\n"
+            "Note: V2 also uses the Engine 2 shading controls above (hatching angle, stroke spacing, etc.)"
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #888; font-size: 11px; margin-bottom: 4px;")
+        group_layout.addWidget(info_label)
+        
+        # Auto-Tune checkbox
+        auto_tune_layout = QHBoxLayout()
+        auto_tune_label = QLabel("Auto-Tune Parameters")
+        auto_tune_label.setToolTip(
+            "When enabled, the engine automatically analyzes the image and sets:\n"
+            "• White threshold (paper detection)\n"
+            "• Edge detection sensitivity\n"
+            "• Stroke spacing based on content density\n"
+            "• Hatching angle perpendicular to dominant gradients\n"
+            "• Cross-hatch and detail phase thresholds\n\n"
+            "This eliminates the need for manual per-image tuning."
+        )
+        self.ps2_auto_tune_checkbox = QCheckBox()
+        self.ps2_auto_tune_checkbox.setChecked(self.ps2_auto_tune)
+        auto_tune_layout.addWidget(auto_tune_label)
+        auto_tune_layout.addStretch()
+        auto_tune_layout.addWidget(self.ps2_auto_tune_checkbox)
+        group_layout.addLayout(auto_tune_layout)
+        
+        self.pencil_shading_v2_settings_group = group
+        layout.addWidget(group)
+    
     def _on_engine_type_changed(self, index: int):
         """Handle engine type selection change. Show/hide engine-specific settings."""
         self._update_engine_description(index)
         
         # Show/hide engine-specific settings groups
-        # Engine 2 (Pencil Shading) settings
+        # Engine 2 (Pencil Shading) settings — also visible for V2 since it shares shading controls
         if hasattr(self, 'shading_settings_group'):
-            # Show for Auto-detect (0), or Engine 2 (2)
-            self.shading_settings_group.setVisible(index in (0, 2))
+            # Show for Auto-detect (0), Engine 2 (2), or Engine 2V2 (7)
+            self.shading_settings_group.setVisible(index in (0, 2, 7))
         
         # Engine 3 (Advanced Gradient) settings
         if hasattr(self, 'advanced_gradient_settings_group'):
@@ -1644,6 +1696,11 @@ class ControlPanel(QMainWindow):
         if hasattr(self, 'hybrid_multi_settings_group'):
             # Show for Auto-detect (0), or Engine 3F (6)
             self.hybrid_multi_settings_group.setVisible(index in (0, 6))
+        
+        # Engine 2V2 (Pencil Shading V2) settings
+        if hasattr(self, 'pencil_shading_v2_settings_group'):
+            # Show for Auto-detect (0), or Engine 2V2 (7)
+            self.pencil_shading_v2_settings_group.setVisible(index in (0, 7))
     
     def _update_engine_description(self, index: int):
         """Update the engine description label based on selection."""
@@ -1661,7 +1718,10 @@ class ControlPanel(QMainWindow):
             5: "🖊️ Engine 3E (Adaptive Brush): Physics-based pencil simulation with realistic tip, "
                "paper texture, and pressure dynamics. Best for organic, hand-drawn appearance.",
             6: "🔀 Engine 3F (Hybrid Multi-Strategy): Multi-strategy region-based rendering that "
-               "segments the image and applies the best engine per region. Best for complex mixed-content artwork."
+               "segments the image and applies the best engine per region. Best for complex mixed-content artwork.",
+            7: "🎨 Engine 2V2 (Pencil Shading V2): Enhanced pencil shading with auto-tune parameter "
+               "optimization, feathered edges, organic strokes, and zone-interleaved drawing. "
+               "Uses the same shading controls as Engine 2 plus auto-tuning."
         }
         if hasattr(self, 'engine_description_label'):
             self.engine_description_label.setText(descriptions.get(index, ""))

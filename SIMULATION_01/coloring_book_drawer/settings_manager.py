@@ -107,7 +107,9 @@ class SettingsManager:
             "hm_transition_width": 10,
             "hm_blend_smoothness": 0.7,
             "hm_strategy_mode": "auto",
-            "hm_focal_detection": True
+            "hm_focal_detection": True,
+            # Engine 2V2: Pencil Shading V2 settings
+            "ps2_auto_tune": False
         }
     
     def save_settings(self, settings_dict):
