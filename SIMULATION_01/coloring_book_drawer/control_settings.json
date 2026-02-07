@@ -2,7 +2,7 @@
   "width": "800",
   "height": "1000",
   "fps": "60",
-  "target_duration": "100.0",
+  "target_duration": "30.0",
   "thickness": "1.0",
   "use_gpu": true,
   "show_pen": true,
@@ -20,5 +20,14 @@
   "hatching_angle": "45",
   "stroke_spacing": "3",
   "edge_phases_first": "1",
-  "shading_order": "natural"
+  "shading_order": "natural",
+  "engine_type": "advanced_gradient",
+  "contour_sensitivity": "0.5",
+  "gradient_smoothness": "0.7",
+  "texture_detection_strength": "0.6",
+  "shadow_passes": "3",
+  "shadow_angle_variation": "30",
+  "brush_softness_contour": "0.3",
+  "brush_softness_shading": "0.7",
+  "pressure_variation": "0.5"
 }

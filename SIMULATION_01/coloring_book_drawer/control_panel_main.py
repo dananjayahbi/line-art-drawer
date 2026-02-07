@@ -90,6 +90,19 @@ class ControlPanel(QMainWindow):
         self.edge_phases_first = 1  # Number of edge layers to complete before shading (1-3)
         self.shading_order = "top_to_bottom"  # "top_to_bottom", "natural", "random"
         
+        # Engine selection
+        self.engine_type = "auto"  # "auto", "pixel_reveal", "pencil_shading", "advanced_gradient"
+        
+        # Advanced Gradient Engine settings (Engine 3)
+        self.contour_sensitivity = 0.5
+        self.gradient_smoothness = 0.7
+        self.texture_detection_strength = 0.6
+        self.shadow_passes = 3
+        self.shadow_angle_variation = 30.0
+        self.brush_softness_contour = 0.3
+        self.brush_softness_shading = 0.7
+        self.pressure_variation = 0.5
+        
         # Frame border settings
         self.frame_thickness = 6.0
         self.frame_speed = 1.0
@@ -155,6 +168,19 @@ class ControlPanel(QMainWindow):
         self.stroke_spacing = int(settings.get("stroke_spacing", 3))
         self.edge_phases_first = int(settings.get("edge_phases_first", 1))
         self.shading_order = settings.get("shading_order", "top_to_bottom")
+        
+        # Engine selection
+        self.engine_type = settings.get("engine_type", "auto")
+        
+        # Advanced Gradient Engine settings (Engine 3)
+        self.contour_sensitivity = float(settings.get("contour_sensitivity", 0.5))
+        self.gradient_smoothness = float(settings.get("gradient_smoothness", 0.7))
+        self.texture_detection_strength = float(settings.get("texture_detection_strength", 0.6))
+        self.shadow_passes = int(settings.get("shadow_passes", 3))
+        self.shadow_angle_variation = float(settings.get("shadow_angle_variation", 30.0))
+        self.brush_softness_contour = float(settings.get("brush_softness_contour", 0.3))
+        self.brush_softness_shading = float(settings.get("brush_softness_shading", 0.7))
+        self.pressure_variation = float(settings.get("pressure_variation", 0.5))
     
     def _get_shading_order_display(self) -> str:
         """Convert internal shading order value to display text."""
@@ -173,6 +199,26 @@ class ControlPanel(QMainWindow):
             "Random": "random"
         }
         return order_map.get(display_text, "top_to_bottom")
+    
+    def _get_engine_type_value(self, index: int) -> str:
+        """Convert combo box index to engine type string."""
+        engine_map = {
+            0: "auto",
+            1: "pixel_reveal",
+            2: "pencil_shading",
+            3: "advanced_gradient"
+        }
+        return engine_map.get(index, "auto")
+    
+    def _get_engine_type_index(self, engine_type: str) -> int:
+        """Convert engine type string to combo box index."""
+        index_map = {
+            "auto": 0,
+            "pixel_reveal": 1,
+            "pencil_shading": 2,
+            "advanced_gradient": 3
+        }
+        return index_map.get(engine_type, 0)
     
     def _save_settings(self):
         """Save all settings to file."""
@@ -213,7 +259,18 @@ class ControlPanel(QMainWindow):
             "hatching_angle": str(self.hatching_angle_slider.value()),
             "stroke_spacing": str(self.stroke_spacing_slider.value()),
             "edge_phases_first": str(self.edge_phases_slider.value()),
-            "shading_order": self._get_shading_order_value(self.shading_order_combo.currentText())
+            "shading_order": self._get_shading_order_value(self.shading_order_combo.currentText()),
+            # Engine selection
+            "engine_type": self._get_engine_type_value(self.engine_type_combo.currentIndex()),
+            # Advanced Gradient Engine settings (Engine 3)
+            "contour_sensitivity": str(self.ag_contour_sensitivity_slider.value() / 10.0),
+            "gradient_smoothness": str(self.ag_gradient_smoothness_slider.value() / 10.0),
+            "texture_detection_strength": str(self.ag_texture_strength_slider.value() / 10.0),
+            "shadow_passes": str(self.ag_shadow_passes_slider.value()),
+            "shadow_angle_variation": str(self.ag_shadow_angle_slider.value()),
+            "brush_softness_contour": str(self.ag_brush_contour_slider.value() / 10.0),
+            "brush_softness_shading": str(self.ag_brush_shading_slider.value() / 10.0),
+            "pressure_variation": str(self.ag_pressure_slider.value() / 10.0)
         }
         
         if self.settings_manager.save_settings(settings):
@@ -697,7 +754,7 @@ class ControlPanel(QMainWindow):
         layout.addWidget(group)
     
     def _create_visual_settings(self, layout):
-        """Create visual settings section."""
+        """Create visual settings section with engine selection."""
         group = QGroupBox("Visual Settings")
         group_layout = QVBoxLayout(group)
         
@@ -713,13 +770,69 @@ class ControlPanel(QMainWindow):
         
         layout.addWidget(group)
         
-        # Add Shading Engine Settings section
+        # Engine Selection section
+        self._create_engine_selection(layout)
+        
+        # Engine-specific settings sections (will be shown/hidden based on selection)
         self._create_shading_settings(layout)
+        self._create_advanced_gradient_settings(layout)
+        
+        # Set initial visibility based on current engine_type
+        self._on_engine_type_changed(self._get_engine_type_index(self.engine_type))
+    
+    def _create_engine_selection(self, layout):
+        """Create engine selection dropdown."""
+        group = QGroupBox("🔧 Engine Selection")
+        group_layout = QVBoxLayout(group)
+        group_layout.setSpacing(10)
+        
+        # Info label
+        info_label = QLabel(
+            "Select the rendering engine for the simulation. "
+            "Auto-detect analyzes the image and picks the best engine."
+        )
+        info_label.setStyleSheet("QLabel { color: #8b7355; font-size: 10px; font-style: italic; }")
+        info_label.setWordWrap(True)
+        group_layout.addWidget(info_label)
+        
+        # Engine type dropdown
+        engine_layout = QHBoxLayout()
+        engine_label = QLabel("Engine:")
+        engine_label.setToolTip(
+            "Choose the rendering engine:\n"
+            "• Auto-detect: Analyzes image complexity automatically\n"
+            "• Engine 1 - Pixel Reveal: Fast, skeleton-based line art\n"
+            "• Engine 2 - Pencil Shading: Hatching-based shading\n"
+            "• Engine 3 - Advanced Gradient: Direction-aware gradient shading"
+        )
+        self.engine_type_combo = QComboBox()
+        self.engine_type_combo.addItems([
+            "🔍 Auto-detect",
+            "✏️ Engine 1: Pixel Reveal (Line Art)",
+            "🎨 Engine 2: Pencil Shading",
+            "🌈 Engine 3: Advanced Gradient"
+        ])
+        self.engine_type_combo.setCurrentIndex(self._get_engine_type_index(self.engine_type))
+        self.engine_type_combo.setMinimumWidth(200)
+        self.engine_type_combo.currentIndexChanged.connect(self._on_engine_type_changed)
+        engine_layout.addWidget(engine_label)
+        engine_layout.addStretch()
+        engine_layout.addWidget(self.engine_type_combo)
+        group_layout.addLayout(engine_layout)
+        
+        # Engine description label (updates when selection changes)
+        self.engine_description_label = QLabel("")
+        self.engine_description_label.setStyleSheet("QLabel { color: #6b8fa8; font-size: 10px; }")
+        self.engine_description_label.setWordWrap(True)
+        group_layout.addWidget(self.engine_description_label)
+        self._update_engine_description(self._get_engine_type_index(self.engine_type))
+        
+        layout.addWidget(group)
     
     def _create_shading_settings(self, layout):
         """Create shading engine settings section for complex artwork."""
-        group = QGroupBox("🎨 Shading Engine (For Complex Artwork)")
-        group_layout = QVBoxLayout(group)
+        self.shading_settings_group = QGroupBox("🎨 Shading Engine (For Complex Artwork)")
+        group_layout = QVBoxLayout(self.shading_settings_group)
         group_layout.setSpacing(12)
         
         # Info label
@@ -864,7 +977,182 @@ class ControlPanel(QMainWindow):
         shading_order_layout.addWidget(self.shading_order_combo)
         group_layout.addLayout(shading_order_layout)
         
-        layout.addWidget(group)
+        layout.addWidget(self.shading_settings_group)
+    
+    def _create_advanced_gradient_settings(self, layout):
+        """Create Advanced Gradient Engine (Engine 3) settings section."""
+        self.advanced_gradient_settings_group = QGroupBox("🌈 Advanced Gradient Engine Settings")
+        group_layout = QVBoxLayout(self.advanced_gradient_settings_group)
+        group_layout.setSpacing(10)
+        
+        # Info label
+        info_label = QLabel(
+            "Engine 3 uses structure tensor analysis for direction-aware strokes, "
+            "progressive gradient reveal, and multi-pass shadow accumulation."
+        )
+        info_label.setStyleSheet("QLabel { color: #8b7355; font-size: 10px; font-style: italic; }")
+        info_label.setWordWrap(True)
+        group_layout.addWidget(info_label)
+        
+        # --- Contour Sensitivity ---
+        self._add_ag_slider(group_layout, "Contour Sensitivity:",
+                           "How sensitive edge/contour detection is (higher = more detail)",
+                           "ag_contour_sensitivity", self.contour_sensitivity,
+                           min_val=1, max_val=10, divisor=10.0, suffix="")
+        
+        # --- Gradient Smoothness ---
+        self._add_ag_slider(group_layout, "Gradient Smoothness:",
+                           "Smoothness of tonal gradient transitions (higher = smoother)",
+                           "ag_gradient_smoothness", self.gradient_smoothness,
+                           min_val=1, max_val=10, divisor=10.0, suffix="")
+        
+        # --- Texture Detection Strength ---
+        self._add_ag_slider(group_layout, "Texture Detection:",
+                           "Strength of texture/hatching pattern detection",
+                           "ag_texture_strength", self.texture_detection_strength,
+                           min_val=1, max_val=10, divisor=10.0, suffix="")
+        
+        # Separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("QFrame { color: #d4c4b0; }")
+        group_layout.addWidget(separator)
+        
+        # --- Shadow Passes ---
+        shadow_passes_layout = QVBoxLayout()
+        shadow_passes_layout.setSpacing(5)
+        
+        sp_header = QHBoxLayout()
+        sp_label = QLabel("Shadow Passes:")
+        sp_label.setToolTip("Number of shadow accumulation passes (more = richer darks)")
+        self.ag_shadow_passes_value_label = QLabel(f"{self.shadow_passes}")
+        self.ag_shadow_passes_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
+        sp_header.addWidget(sp_label)
+        sp_header.addStretch()
+        sp_header.addWidget(self.ag_shadow_passes_value_label)
+        shadow_passes_layout.addLayout(sp_header)
+        
+        self.ag_shadow_passes_slider = QSlider(Qt.Orientation.Horizontal)
+        self.ag_shadow_passes_slider.setMinimum(1)
+        self.ag_shadow_passes_slider.setMaximum(6)
+        self.ag_shadow_passes_slider.setValue(self.shadow_passes)
+        self.ag_shadow_passes_slider.valueChanged.connect(
+            lambda v: self.ag_shadow_passes_value_label.setText(f"{v}")
+        )
+        shadow_passes_layout.addWidget(self.ag_shadow_passes_slider)
+        group_layout.addLayout(shadow_passes_layout)
+        
+        # --- Shadow Angle Variation ---
+        sa_layout = QVBoxLayout()
+        sa_layout.setSpacing(5)
+        
+        sa_header = QHBoxLayout()
+        sa_label = QLabel("Shadow Angle Variation:")
+        sa_label.setToolTip("Angle variation between shadow passes (degrees)")
+        self.ag_shadow_angle_value_label = QLabel(f"{int(self.shadow_angle_variation)}°")
+        self.ag_shadow_angle_value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
+        sa_header.addWidget(sa_label)
+        sa_header.addStretch()
+        sa_header.addWidget(self.ag_shadow_angle_value_label)
+        sa_layout.addLayout(sa_header)
+        
+        self.ag_shadow_angle_slider = QSlider(Qt.Orientation.Horizontal)
+        self.ag_shadow_angle_slider.setMinimum(5)
+        self.ag_shadow_angle_slider.setMaximum(90)
+        self.ag_shadow_angle_slider.setValue(int(self.shadow_angle_variation))
+        self.ag_shadow_angle_slider.valueChanged.connect(
+            lambda v: self.ag_shadow_angle_value_label.setText(f"{v}°")
+        )
+        sa_layout.addWidget(self.ag_shadow_angle_slider)
+        group_layout.addLayout(sa_layout)
+        
+        # Separator
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.HLine)
+        separator2.setStyleSheet("QFrame { color: #d4c4b0; }")
+        group_layout.addWidget(separator2)
+        
+        # --- Brush Softness (Contour) ---
+        self._add_ag_slider(group_layout, "Brush Softness (Contour):",
+                           "Softness of brush for contour/edge strokes (0=hard, 1=soft)",
+                           "ag_brush_contour", self.brush_softness_contour,
+                           min_val=0, max_val=10, divisor=10.0, suffix="")
+        
+        # --- Brush Softness (Shading) ---
+        self._add_ag_slider(group_layout, "Brush Softness (Shading):",
+                           "Softness of brush for shading/shadow strokes (0=hard, 1=soft)",
+                           "ag_brush_shading", self.brush_softness_shading,
+                           min_val=0, max_val=10, divisor=10.0, suffix="")
+        
+        # --- Pressure Variation ---
+        self._add_ag_slider(group_layout, "Pressure Variation:",
+                           "How much stroke pressure varies (0=uniform, 1=high variation)",
+                           "ag_pressure", self.pressure_variation,
+                           min_val=0, max_val=10, divisor=10.0, suffix="")
+        
+        layout.addWidget(self.advanced_gradient_settings_group)
+    
+    def _add_ag_slider(self, parent_layout, label_text: str, tooltip: str,
+                      attr_prefix: str, initial_value: float,
+                      min_val: int, max_val: int, divisor: float, suffix: str):
+        """Helper to add a labeled slider for Advanced Gradient settings."""
+        slider_layout = QVBoxLayout()
+        slider_layout.setSpacing(5)
+        
+        header = QHBoxLayout()
+        label = QLabel(label_text)
+        label.setToolTip(tooltip)
+        value_label = QLabel(f"{initial_value:.1f}{suffix}")
+        value_label.setStyleSheet("QLabel { color: #c2785a; font-weight: bold; }")
+        header.addWidget(label)
+        header.addStretch()
+        header.addWidget(value_label)
+        slider_layout.addLayout(header)
+        
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setMinimum(min_val)
+        slider.setMaximum(max_val)
+        slider.setValue(int(initial_value * divisor))
+        slider.valueChanged.connect(
+            lambda v: value_label.setText(f"{v/divisor:.1f}{suffix}")
+        )
+        slider_layout.addWidget(slider)
+        
+        # Store references as instance attributes
+        setattr(self, f"{attr_prefix}_slider", slider)
+        setattr(self, f"{attr_prefix}_value_label", value_label)
+        
+        parent_layout.addLayout(slider_layout)
+    
+    def _on_engine_type_changed(self, index: int):
+        """Handle engine type selection change. Show/hide engine-specific settings."""
+        self._update_engine_description(index)
+        
+        # Show/hide engine-specific settings groups
+        # Engine 2 (Pencil Shading) settings
+        if hasattr(self, 'shading_settings_group'):
+            # Show for Auto-detect (0), or Engine 2 (2)
+            self.shading_settings_group.setVisible(index in (0, 2))
+        
+        # Engine 3 (Advanced Gradient) settings
+        if hasattr(self, 'advanced_gradient_settings_group'):
+            # Show for Auto-detect (0), or Engine 3 (3)
+            self.advanced_gradient_settings_group.setVisible(index in (0, 3))
+    
+    def _update_engine_description(self, index: int):
+        """Update the engine description label based on selection."""
+        descriptions = {
+            0: "ℹ️ Auto-detect analyzes your image and picks the best engine. "
+               "Engine-specific settings below will be used if that engine is selected.",
+            1: "✏️ Engine 1 (Pixel Reveal): Fast skeleton-based tracing for clean line art. "
+               "Best for simple coloring book pages with no shading.",
+            2: "🎨 Engine 2 (Pencil Shading): Hatching-based rendering for complex artwork. "
+               "Best for images with textures and shadows.",
+            3: "🌈 Engine 3 (Advanced Gradient): Direction-aware gradient shading with "
+               "structure tensor analysis. Best for high-contrast pencil art with rich shadows."
+        }
+        if hasattr(self, 'engine_description_label'):
+            self.engine_description_label.setText(descriptions.get(index, ""))
     
     def _create_custom_pen_settings(self, layout):
         """Create custom pen settings section."""
@@ -1527,6 +1815,19 @@ class ControlPanel(QMainWindow):
         self.edge_phases_slider.setValue(self.edge_phases_first)
         self.shading_order_combo.setCurrentText(self._get_shading_order_display())
         
+        # Engine selection
+        self.engine_type_combo.setCurrentIndex(self._get_engine_type_index(self.engine_type))
+        
+        # Advanced Gradient Engine settings (Engine 3)
+        self.ag_contour_sensitivity_slider.setValue(int(self.contour_sensitivity * 10))
+        self.ag_gradient_smoothness_slider.setValue(int(self.gradient_smoothness * 10))
+        self.ag_texture_strength_slider.setValue(int(self.texture_detection_strength * 10))
+        self.ag_shadow_passes_slider.setValue(self.shadow_passes)
+        self.ag_shadow_angle_slider.setValue(int(self.shadow_angle_variation))
+        self.ag_brush_contour_slider.setValue(int(self.brush_softness_contour * 10))
+        self.ag_brush_shading_slider.setValue(int(self.brush_softness_shading * 10))
+        self.ag_pressure_slider.setValue(int(self.pressure_variation * 10))
+        
         # Update pen status label and preview
         print(f"DEBUG _update_ui_from_settings: use_custom_pen={self.use_custom_pen}, custom_pen_path='{self.custom_pen_path}'")
         if self.use_custom_pen and self.custom_pen_path:
@@ -1641,6 +1942,22 @@ class ControlPanel(QMainWindow):
             "--stroke-spacing", str(stroke_spacing),
             "--edge-phases-first", str(edge_phases_first),
             "--shading-order", shading_order
+        ])
+        
+        # Engine selection
+        engine_type = self._get_engine_type_value(self.engine_type_combo.currentIndex())
+        cmd.extend(["--engine-type", engine_type])
+        
+        # Advanced Gradient Engine settings (Engine 3)
+        cmd.extend([
+            "--contour-sensitivity", str(self.ag_contour_sensitivity_slider.value() / 10.0),
+            "--gradient-smoothness", str(self.ag_gradient_smoothness_slider.value() / 10.0),
+            "--texture-detection-strength", str(self.ag_texture_strength_slider.value() / 10.0),
+            "--shadow-passes", str(self.ag_shadow_passes_slider.value()),
+            "--shadow-angle-variation", str(self.ag_shadow_angle_slider.value()),
+            "--brush-softness-contour", str(self.ag_brush_contour_slider.value() / 10.0),
+            "--brush-softness-shading", str(self.ag_brush_shading_slider.value() / 10.0),
+            "--pressure-variation", str(self.ag_pressure_slider.value() / 10.0)
         ])
         
         # Launch in thread

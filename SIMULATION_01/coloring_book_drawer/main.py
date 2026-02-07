@@ -54,6 +54,14 @@ from pen_renderer import PenRenderer
 from frame_animator import FrameAnimator
 from loading_screen import LoadingScreen, BackgroundProcessor
 
+# Import Engine 3 - Advanced Gradient Shading
+try:
+    from engines.advanced_gradient import AdvancedGradientEngine
+    HAS_ADVANCED_GRADIENT = True
+except ImportError as e:
+    HAS_ADVANCED_GRADIENT = False
+    print(f"Advanced Gradient Engine not available: {e}")
+
 # GPU acceleration - try to import CuPy for CUDA support
 HAS_GPU = False
 GPU_INFO = "No GPU acceleration"
@@ -171,11 +179,13 @@ class ColoringBookDrawerSimulation(BaseSimulation):
     Main simulation using pixel-reveal approach.
     Progressively reveals the original image pixels for perfect reproduction.
     
-    ENHANCED: Now supports two rendering engines:
-    - PixelRevealEngine: For simple line drawings (fast, skeleton-based)
-    - PencilShadingEngine: For complex shaded artwork with textures/shadows
+    ENHANCED: Now supports three rendering engines:
+    - PixelRevealEngine (Engine 1): For simple line drawings (fast, skeleton-based)
+    - PencilShadingEngine (Engine 2): For complex shaded artwork with textures/shadows
+    - AdvancedGradientEngine (Engine 3): For high-contrast pencil art with rich gradients
     
-    The engine is auto-selected based on image complexity analysis.
+    The engine is auto-selected based on image complexity analysis,
+    or can be manually selected via the control panel.
     
     NOTE: FPS is now locked at 60 for smooth rendering and recording.
     The 'speed' parameter controls animation speed independently.
@@ -190,7 +200,12 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                  pen_scale=1.0, pen_rotation=True,
                  force_shading_engine=False, shading_sensitivity=0.5,
                  hatching_angle=45.0, stroke_spacing=3,
-                 edge_phases_first=1, shading_order="top_to_bottom"):
+                 edge_phases_first=1, shading_order="top_to_bottom",
+                 engine_type="auto",
+                 contour_sensitivity=0.5, gradient_smoothness=0.7,
+                 texture_detection_strength=0.6, shadow_passes=3,
+                 shadow_angle_variation=30.0, brush_softness_contour=0.3,
+                 brush_softness_shading=0.7, pressure_variation=0.5):
         # FPS is now LOCKED at 60 for all simulations
         super().__init__(width, height, fps=60, title="Coloring Book Drawer")
         
@@ -212,6 +227,20 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.edge_phases_first = edge_phases_first
         self.shading_order = shading_order
         self.using_shading_engine = False  # Will be set during setup
+        self.using_advanced_gradient = False  # Will be set during setup
+        
+        # Engine type: "auto", "pixel_reveal", "pencil_shading", "advanced_gradient"
+        self.engine_type = engine_type
+        
+        # Advanced Gradient Engine (Engine 3) settings
+        self.contour_sensitivity = contour_sensitivity
+        self.gradient_smoothness = gradient_smoothness
+        self.texture_detection_strength = texture_detection_strength
+        self.shadow_passes = shadow_passes
+        self.shadow_angle_variation = shadow_angle_variation
+        self.brush_softness_contour = brush_softness_contour
+        self.brush_softness_shading = brush_softness_shading
+        self.pressure_variation = pressure_variation
         
         # Pixel reveal engine (one of two engines will be used)
         self.reveal_engine = None
@@ -273,12 +302,53 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         # Process image if provided
         if self.image_path:
             try:
-                # First, analyze image to determine which engine to use
-                engine_choice = self._analyze_and_select_engine()
+                # Determine which engine to use
+                if self.engine_type == "auto":
+                    engine_choice = self._analyze_and_select_engine()
+                    # Check if force_shading overrides
+                    if self.force_shading_engine and engine_choice == "simple":
+                        engine_choice = "shading"
+                elif self.engine_type == "pixel_reveal":
+                    engine_choice = "simple"
+                elif self.engine_type == "pencil_shading":
+                    engine_choice = "shading"
+                elif self.engine_type == "advanced_gradient":
+                    engine_choice = "advanced_gradient"
+                else:
+                    engine_choice = self._analyze_and_select_engine()
                 
-                if engine_choice == "shading" or self.force_shading_engine:
+                if engine_choice == "advanced_gradient":
+                    if not HAS_ADVANCED_GRADIENT:
+                        print("\n⚠️  Advanced Gradient Engine not available, falling back to Pencil Shading")
+                        engine_choice = "shading"
+                    else:
+                        print("\n🌈 Using ADVANCED GRADIENT ENGINE (Engine 3)")
+                        self.using_advanced_gradient = True
+                        self.using_shading_engine = False
+                        
+                        self.reveal_engine = AdvancedGradientEngine(
+                            self.image_path,
+                            self.width,
+                            self.height,
+                            padding=40,
+                            use_gpu=self.use_gpu,
+                            contour_sensitivity=self.contour_sensitivity,
+                            gradient_smoothness=self.gradient_smoothness,
+                            texture_detection_strength=self.texture_detection_strength,
+                            shadow_passes=self.shadow_passes,
+                            shadow_angle_variation=self.shadow_angle_variation,
+                            brush_softness_contour=self.brush_softness_contour,
+                            brush_softness_shading=self.brush_softness_shading,
+                            pressure_variation=self.pressure_variation,
+                        )
+                        
+                        # Process with loading screen (Engine 3 is slow like Engine 2)
+                        self._process_with_loading_screen()
+                
+                if engine_choice == "shading":
                     print("\n🎨 Using PENCIL SHADING ENGINE (for complex artwork)")
                     self.using_shading_engine = True
+                    self.using_advanced_gradient = False
                     
                     # Create engine instance
                     self.reveal_engine = PencilShadingEngine(
@@ -297,9 +367,10 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                     # Process with loading screen (for shading engine which is slow)
                     self._process_with_loading_screen()
                     
-                else:
+                elif engine_choice == "simple":
                     print("\n✏️ Using PIXEL REVEAL ENGINE (for line art)")
                     self.using_shading_engine = False
+                    self.using_advanced_gradient = False
                     self.reveal_engine = PixelRevealEngine(
                         self.image_path, 
                         self.width, 
@@ -311,7 +382,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                     self.reveal_engine.process_image()
                 
                 # Adjust brush scale based on thickness setting (for PixelRevealEngine)
-                if not self.using_shading_engine:
+                if not self.using_shading_engine and not self.using_advanced_gradient:
                     self.reveal_engine.brush_scale = 1.1 + (self.thickness_scale * 0.3)
                 
                 # Auto-calculate speed if target_duration is set
@@ -387,6 +458,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         Returns:
             "simple" for line art (use PixelRevealEngine)
             "shading" for complex artwork (use PencilShadingEngine)
+            "advanced_gradient" for high-contrast pencil art (use AdvancedGradientEngine)
         """
         # Quick analysis using OpenCV
         img = cv2.imread(str(self.image_path))
@@ -416,16 +488,30 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         shade_mask = dark_pixels & (edge_dilated == 0)
         shade_coverage = np.mean(shade_mask)
         
+        # Calculate gradient complexity (for Engine 3 detection)
+        # High gradient coverage + high shade coverage = advanced gradient territory
+        high_gradient_coverage = np.mean(local_variance > 100)
+        deep_dark_coverage = np.mean(gray < 150)
+        
         print(f"\n📊 Image Analysis:")
         print(f"   Edge coverage: {100*edge_coverage:.1f}%")
         print(f"   Shade coverage: {100*shade_coverage:.1f}%")
         print(f"   Gradient regions: {100*gradient_coverage:.1f}%")
+        print(f"   High gradient regions: {100*high_gradient_coverage:.1f}%")
         print(f"   Dark pixel coverage: {100*np.mean(very_dark_pixels):.1f}%")
+        print(f"   Deep dark coverage: {100*deep_dark_coverage:.1f}%")
         
         # Decision logic:
-        # - If shade coverage > 10% OR gradient coverage > 5%, use shading engine
-        # - Otherwise, use simple engine
-        if shade_coverage > 0.10 or gradient_coverage > 0.05:
+        # Engine 3: Very complex - high gradient coverage AND deep dark areas
+        # Requires both rich tonal range and significant dark regions
+        if HAS_ADVANCED_GRADIENT and (
+            (high_gradient_coverage > 0.08 and deep_dark_coverage > 0.10) or
+            (shade_coverage > 0.20 and gradient_coverage > 0.10)
+        ):
+            print("   → Detected high-contrast artwork with rich gradients")
+            return "advanced_gradient"
+        # Engine 2: Moderate shading/textures
+        elif shade_coverage > 0.10 or gradient_coverage > 0.05:
             print("   → Detected complex shading/textures")
             return "shading"
         else:
@@ -511,8 +597,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
             return
         
         # Calculate points to reveal this frame based on speed
-        if self.using_shading_engine:
-            # PencilShadingEngine uses phase-based speed
+        if self.using_shading_engine or self.using_advanced_gradient:
+            # PencilShadingEngine and AdvancedGradientEngine use phase-based speed
             base_points = self.reveal_engine.get_points_per_update()
             points_per_frame = int(base_points * self.speed)
         else:
@@ -528,8 +614,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         
         # Update pen position (for visual feedback)
         if has_more and self.show_pen:
-            if self.using_shading_engine:
-                # PencilShadingEngine provides pen position directly
+            if self.using_shading_engine or self.using_advanced_gradient:
+                # PencilShadingEngine and AdvancedGradientEngine provide pen position directly
                 self.pen_pos = self.reveal_engine.get_current_pen_position()
                 self.pen_visible = True
             else:
@@ -609,6 +695,29 @@ def main():
                         choices=["top_to_bottom", "natural", "random"],
                         help="Order for shading strokes after edges")
     
+    # Engine selection
+    parser.add_argument("--engine-type", type=str, default="auto",
+                        choices=["auto", "pixel_reveal", "pencil_shading", "advanced_gradient"],
+                        help="Rendering engine to use (auto = auto-detect)")
+    
+    # Advanced Gradient Engine (Engine 3) options
+    parser.add_argument("--contour-sensitivity", type=float, default=0.5,
+                        help="Engine 3: Contour detection sensitivity (0.0-1.0)")
+    parser.add_argument("--gradient-smoothness", type=float, default=0.7,
+                        help="Engine 3: Gradient transition smoothness (0.0-1.0)")
+    parser.add_argument("--texture-detection-strength", type=float, default=0.6,
+                        help="Engine 3: Texture pattern detection strength (0.0-1.0)")
+    parser.add_argument("--shadow-passes", type=int, default=3,
+                        help="Engine 3: Number of shadow accumulation passes (1-6)")
+    parser.add_argument("--shadow-angle-variation", type=float, default=30.0,
+                        help="Engine 3: Angle variation between shadow passes (degrees)")
+    parser.add_argument("--brush-softness-contour", type=float, default=0.3,
+                        help="Engine 3: Brush softness for contour strokes (0.0-1.0)")
+    parser.add_argument("--brush-softness-shading", type=float, default=0.7,
+                        help="Engine 3: Brush softness for shading strokes (0.0-1.0)")
+    parser.add_argument("--pressure-variation", type=float, default=0.5,
+                        help="Engine 3: Stroke pressure variation (0.0-1.0)")
+    
     args = parser.parse_args()
     
     # Handle target duration mode
@@ -652,7 +761,18 @@ def main():
         hatching_angle=args.hatching_angle,
         stroke_spacing=args.stroke_spacing,
         edge_phases_first=args.edge_phases_first,
-        shading_order=args.shading_order
+        shading_order=args.shading_order,
+        # Engine selection
+        engine_type=args.engine_type,
+        # Advanced Gradient Engine (Engine 3) options
+        contour_sensitivity=args.contour_sensitivity,
+        gradient_smoothness=args.gradient_smoothness,
+        texture_detection_strength=args.texture_detection_strength,
+        shadow_passes=args.shadow_passes,
+        shadow_angle_variation=args.shadow_angle_variation,
+        brush_softness_contour=args.brush_softness_contour,
+        brush_softness_shading=args.brush_softness_shading,
+        pressure_variation=args.pressure_variation,
     )
     
     sim.run()

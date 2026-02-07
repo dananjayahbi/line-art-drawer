@@ -41,6 +41,9 @@ class SettingsManager:
             # Visual settings
             "theme": "Classic",
             
+            # Engine selection (auto / pixel_reveal / pencil_shading / advanced_gradient)
+            "engine_type": "auto",
+            
             # Frame border settings
             "frame_thickness": 6.0,
             "frame_speed": 1.0,
@@ -55,7 +58,25 @@ class SettingsManager:
             # Recording settings
             "auto_record": False,
             "video_fps": "60",
-            "video_quality": "high"
+            "video_quality": "high",
+            
+            # Engine 2: Pencil Shading settings
+            "force_shading_engine": False,
+            "shading_sensitivity": 0.5,
+            "hatching_angle": 45.0,
+            "stroke_spacing": 3,
+            "edge_phases_first": 1,
+            "shading_order": "top_to_bottom",
+            
+            # Engine 3: Advanced Gradient settings
+            "contour_sensitivity": 0.5,
+            "gradient_smoothness": 0.7,
+            "texture_detection_strength": 0.6,
+            "shadow_passes": 3,
+            "shadow_angle_variation": 30.0,
+            "brush_softness_contour": 0.3,
+            "brush_softness_shading": 0.7,
+            "pressure_variation": 0.5
         }
     
     def save_settings(self, settings_dict):
