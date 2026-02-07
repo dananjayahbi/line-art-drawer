@@ -85,7 +85,16 @@ class SettingsManager:
             "zp_animation_mode": "multi_focal",
             "zp_transition_width": 0.1,
             "zp_stroke_density": 0.8,
-            "zp_enable_portrait": True
+            "zp_enable_portrait": True,
+            
+            # Engine 3E: Adaptive Brush settings
+            "ab_tip_shape": "round",
+            "ab_pencil_hardness": 0.5,
+            "ab_pencil_sharpness": 0.7,
+            "ab_paper_type": "cold_press",
+            "ab_paper_texture_strength": 0.5,
+            "ab_pressure_variation": 0.5,
+            "ab_graphite_buildup": 0.7
         }
     
     def save_settings(self, settings_dict):

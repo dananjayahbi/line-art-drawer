@@ -190,6 +190,15 @@ class ControlPanel(QMainWindow):
         self.zp_transition_width = float(settings.get("zp_transition_width", 0.1))
         self.zp_stroke_density = float(settings.get("zp_stroke_density", 0.8))
         self.zp_enable_portrait = settings.get("zp_enable_portrait", True)
+        
+        # Adaptive Brush Engine settings (Engine 3E)
+        self.ab_tip_shape = settings.get("ab_tip_shape", "round")
+        self.ab_pencil_hardness = float(settings.get("ab_pencil_hardness", 0.5))
+        self.ab_pencil_sharpness = float(settings.get("ab_pencil_sharpness", 0.7))
+        self.ab_paper_type = settings.get("ab_paper_type", "cold_press")
+        self.ab_paper_texture_strength = float(settings.get("ab_paper_texture_strength", 0.5))
+        self.ab_pressure_variation = float(settings.get("ab_pressure_variation", 0.5))
+        self.ab_graphite_buildup = float(settings.get("ab_graphite_buildup", 0.7))
     
     def _get_shading_order_display(self) -> str:
         """Convert internal shading order value to display text."""
@@ -216,7 +225,8 @@ class ControlPanel(QMainWindow):
             1: "pixel_reveal",
             2: "pencil_shading",
             3: "advanced_gradient",
-            4: "zone_progressive"
+            4: "zone_progressive",
+            5: "adaptive_brush"
         }
         return engine_map.get(index, "auto")
     
@@ -227,7 +237,8 @@ class ControlPanel(QMainWindow):
             "pixel_reveal": 1,
             "pencil_shading": 2,
             "advanced_gradient": 3,
-            "zone_progressive": 4
+            "zone_progressive": 4,
+            "adaptive_brush": 5
         }
         return index_map.get(engine_type, 0)
     
@@ -289,7 +300,15 @@ class ControlPanel(QMainWindow):
             "zp_animation_mode": self._get_zp_animation_mode_value(self.zp_animation_mode_combo.currentText()),
             "zp_transition_width": str(self.zp_transition_slider.value() / 10.0),
             "zp_stroke_density": str(self.zp_stroke_density_slider.value() / 10.0),
-            "zp_enable_portrait": self.zp_portrait_toggle.isChecked()
+            "zp_enable_portrait": self.zp_portrait_toggle.isChecked(),
+            # Adaptive Brush Engine settings (Engine 3E)
+            "ab_tip_shape": self._get_ab_tip_shape_value(self.ab_tip_shape_combo.currentText()),
+            "ab_pencil_hardness": str(self.ab_hardness_slider.value() / 10.0),
+            "ab_pencil_sharpness": str(self.ab_sharpness_slider.value() / 10.0),
+            "ab_paper_type": self._get_ab_paper_type_value(self.ab_paper_type_combo.currentText()),
+            "ab_paper_texture_strength": str(self.ab_texture_strength_slider.value() / 10.0),
+            "ab_pressure_variation": str(self.ab_pressure_variation_slider.value() / 10.0),
+            "ab_graphite_buildup": str(self.ab_graphite_buildup_slider.value() / 10.0)
         }
         
         if self.settings_manager.save_settings(settings):
@@ -824,7 +843,8 @@ class ControlPanel(QMainWindow):
             "• Engine 1 - Pixel Reveal: Fast, skeleton-based line art\n"
             "• Engine 2 - Pencil Shading: Hatching-based shading\n"
             "• Engine 3 - Advanced Gradient: Direction-aware gradient shading\n"
-            "• Engine 3D - Zone Progressive: Focal-point-first dramatic reveal"
+            "• Engine 3D - Zone Progressive: Focal-point-first dramatic reveal\n"
+            "• Engine 3E - Adaptive Brush: Physics-based pencil simulation"
         )
         self.engine_type_combo = QComboBox()
         self.engine_type_combo.addItems([
@@ -832,7 +852,8 @@ class ControlPanel(QMainWindow):
             "✏️ Engine 1: Pixel Reveal (Line Art)",
             "🎨 Engine 2: Pencil Shading",
             "🌈 Engine 3: Advanced Gradient",
-            "🎯 Engine 3D: Zone Progressive"
+            "🎯 Engine 3D: Zone Progressive",
+            "🖊️ Engine 3E: Adaptive Brush"
         ])
         self.engine_type_combo.setCurrentIndex(self._get_engine_type_index(self.engine_type))
         self.engine_type_combo.setMinimumWidth(200)
@@ -1277,6 +1298,130 @@ class ControlPanel(QMainWindow):
         group_layout.addLayout(portrait_layout)
         
         layout.addWidget(self.zone_progressive_settings_group)
+        
+        # Engine 3E: Adaptive Brush settings
+        self._create_adaptive_brush_settings(layout)
+    
+    def _create_adaptive_brush_settings(self, layout):
+        """Create Engine 3E: Adaptive Brush settings controls."""
+        
+        self.adaptive_brush_settings_group = QGroupBox("🖊️ Adaptive Brush Engine Settings")
+        group_layout = QVBoxLayout(self.adaptive_brush_settings_group)
+        group_layout.setSpacing(8)
+        
+        # Tip Shape combo
+        tip_layout = QHBoxLayout()
+        tip_label = QLabel("Tip Shape:")
+        self.ab_tip_shape_combo = QComboBox()
+        self.ab_tip_shape_combo.addItems(["Round", "Chisel", "Blunt"])
+        self.ab_tip_shape_combo.setCurrentText(self._get_ab_tip_shape_display(self.ab_tip_shape))
+        tip_layout.addWidget(tip_label)
+        tip_layout.addStretch()
+        tip_layout.addWidget(self.ab_tip_shape_combo)
+        group_layout.addLayout(tip_layout)
+        
+        # Pencil Hardness slider (0=soft 6B, 10=hard 4H)
+        hardness_layout = QHBoxLayout()
+        hardness_label = QLabel("Pencil Hardness (Soft 6B ↔ Hard 4H):")
+        self.ab_hardness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.ab_hardness_slider.setRange(0, 10)
+        self.ab_hardness_slider.setValue(int(self.ab_pencil_hardness * 10))
+        self.ab_hardness_value = QLabel(f"{self.ab_pencil_hardness:.1f}")
+        self.ab_hardness_slider.valueChanged.connect(
+            lambda v: self.ab_hardness_value.setText(f"{v / 10.0:.1f}"))
+        hardness_layout.addWidget(hardness_label)
+        hardness_layout.addWidget(self.ab_hardness_slider)
+        hardness_layout.addWidget(self.ab_hardness_value)
+        group_layout.addLayout(hardness_layout)
+        
+        # Pencil Sharpness slider
+        sharpness_layout = QHBoxLayout()
+        sharpness_label = QLabel("Pencil Sharpness:")
+        self.ab_sharpness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.ab_sharpness_slider.setRange(1, 10)
+        self.ab_sharpness_slider.setValue(int(self.ab_pencil_sharpness * 10))
+        self.ab_sharpness_value = QLabel(f"{self.ab_pencil_sharpness:.1f}")
+        self.ab_sharpness_slider.valueChanged.connect(
+            lambda v: self.ab_sharpness_value.setText(f"{v / 10.0:.1f}"))
+        sharpness_layout.addWidget(sharpness_label)
+        sharpness_layout.addWidget(self.ab_sharpness_slider)
+        sharpness_layout.addWidget(self.ab_sharpness_value)
+        group_layout.addLayout(sharpness_layout)
+        
+        # Paper Type combo
+        paper_layout = QHBoxLayout()
+        paper_label = QLabel("Paper Type:")
+        self.ab_paper_type_combo = QComboBox()
+        self.ab_paper_type_combo.addItems(["Smooth", "Cold Press", "Rough"])
+        self.ab_paper_type_combo.setCurrentText(self._get_ab_paper_type_display(self.ab_paper_type))
+        paper_layout.addWidget(paper_label)
+        paper_layout.addStretch()
+        paper_layout.addWidget(self.ab_paper_type_combo)
+        group_layout.addLayout(paper_layout)
+        
+        # Paper Texture Strength slider
+        tex_layout = QHBoxLayout()
+        tex_label = QLabel("Paper Texture Strength:")
+        self.ab_texture_strength_slider = QSlider(Qt.Orientation.Horizontal)
+        self.ab_texture_strength_slider.setRange(0, 10)
+        self.ab_texture_strength_slider.setValue(int(self.ab_paper_texture_strength * 10))
+        self.ab_tex_value = QLabel(f"{self.ab_paper_texture_strength:.1f}")
+        self.ab_texture_strength_slider.valueChanged.connect(
+            lambda v: self.ab_tex_value.setText(f"{v / 10.0:.1f}"))
+        tex_layout.addWidget(tex_label)
+        tex_layout.addWidget(self.ab_texture_strength_slider)
+        tex_layout.addWidget(self.ab_tex_value)
+        group_layout.addLayout(tex_layout)
+        
+        # Pressure Variation slider
+        press_layout = QHBoxLayout()
+        press_label = QLabel("Pressure Variation:")
+        self.ab_pressure_variation_slider = QSlider(Qt.Orientation.Horizontal)
+        self.ab_pressure_variation_slider.setRange(0, 10)
+        self.ab_pressure_variation_slider.setValue(int(self.ab_pressure_variation * 10))
+        self.ab_press_value = QLabel(f"{self.ab_pressure_variation:.1f}")
+        self.ab_pressure_variation_slider.valueChanged.connect(
+            lambda v: self.ab_press_value.setText(f"{v / 10.0:.1f}"))
+        press_layout.addWidget(press_label)
+        press_layout.addWidget(self.ab_pressure_variation_slider)
+        press_layout.addWidget(self.ab_press_value)
+        group_layout.addLayout(press_layout)
+        
+        # Graphite Buildup slider
+        buildup_layout = QHBoxLayout()
+        buildup_label = QLabel("Graphite Buildup:")
+        self.ab_graphite_buildup_slider = QSlider(Qt.Orientation.Horizontal)
+        self.ab_graphite_buildup_slider.setRange(1, 10)
+        self.ab_graphite_buildup_slider.setValue(int(self.ab_graphite_buildup * 10))
+        self.ab_buildup_value = QLabel(f"{self.ab_graphite_buildup:.1f}")
+        self.ab_graphite_buildup_slider.valueChanged.connect(
+            lambda v: self.ab_buildup_value.setText(f"{v / 10.0:.1f}"))
+        buildup_layout.addWidget(buildup_label)
+        buildup_layout.addWidget(self.ab_graphite_buildup_slider)
+        buildup_layout.addWidget(self.ab_buildup_value)
+        group_layout.addLayout(buildup_layout)
+        
+        layout.addWidget(self.adaptive_brush_settings_group)
+    
+    def _get_ab_tip_shape_value(self, display_text: str) -> str:
+        """Convert display text to internal tip shape value."""
+        shape_map = {"Round": "round", "Chisel": "chisel", "Blunt": "blunt"}
+        return shape_map.get(display_text, "round")
+    
+    def _get_ab_tip_shape_display(self, shape: str) -> str:
+        """Convert internal tip shape to display text."""
+        display_map = {"round": "Round", "chisel": "Chisel", "blunt": "Blunt"}
+        return display_map.get(shape, "Round")
+    
+    def _get_ab_paper_type_value(self, display_text: str) -> str:
+        """Convert display text to internal paper type value."""
+        paper_map = {"Smooth": "smooth", "Cold Press": "cold_press", "Rough": "rough"}
+        return paper_map.get(display_text, "cold_press")
+    
+    def _get_ab_paper_type_display(self, paper_type: str) -> str:
+        """Convert internal paper type to display text."""
+        display_map = {"smooth": "Smooth", "cold_press": "Cold Press", "rough": "Rough"}
+        return display_map.get(paper_type, "Cold Press")
     
     def _get_zp_animation_mode_value(self, display_text: str) -> str:
         """Convert display text to internal animation mode value."""
@@ -1317,6 +1462,11 @@ class ControlPanel(QMainWindow):
         if hasattr(self, 'zone_progressive_settings_group'):
             # Show for Auto-detect (0), or Engine 3D (4)
             self.zone_progressive_settings_group.setVisible(index in (0, 4))
+        
+        # Engine 3E (Adaptive Brush) settings
+        if hasattr(self, 'adaptive_brush_settings_group'):
+            # Show for Auto-detect (0), or Engine 3E (5)
+            self.adaptive_brush_settings_group.setVisible(index in (0, 5))
     
     def _update_engine_description(self, index: int):
         """Update the engine description label based on selection."""
@@ -1330,7 +1480,9 @@ class ControlPanel(QMainWindow):
             3: "🌈 Engine 3 (Advanced Gradient): Direction-aware gradient shading with "
                "structure tensor analysis. Best for high-contrast pencil art with rich shadows.",
             4: "🎯 Engine 3D (Zone Progressive): Reveals artwork from visually important regions "
-               "outward. Best for portraits, centered compositions, and dramatic reveals."
+               "outward. Best for portraits, centered compositions, and dramatic reveals.",
+            5: "🖊️ Engine 3E (Adaptive Brush): Physics-based pencil simulation with realistic tip, "
+               "paper texture, and pressure dynamics. Best for organic, hand-drawn appearance."
         }
         if hasattr(self, 'engine_description_label'):
             self.engine_description_label.setText(descriptions.get(index, ""))
@@ -2018,6 +2170,15 @@ class ControlPanel(QMainWindow):
         self.zp_stroke_density_slider.setValue(int(self.zp_stroke_density * 10))
         self.zp_portrait_toggle.setChecked(self.zp_enable_portrait)
         
+        # Adaptive Brush Engine settings (Engine 3E)
+        self.ab_tip_shape_combo.setCurrentText(self._get_ab_tip_shape_display(self.ab_tip_shape))
+        self.ab_hardness_slider.setValue(int(self.ab_pencil_hardness * 10))
+        self.ab_sharpness_slider.setValue(int(self.ab_pencil_sharpness * 10))
+        self.ab_paper_type_combo.setCurrentText(self._get_ab_paper_type_display(self.ab_paper_type))
+        self.ab_texture_strength_slider.setValue(int(self.ab_paper_texture_strength * 10))
+        self.ab_pressure_variation_slider.setValue(int(self.ab_pressure_variation * 10))
+        self.ab_graphite_buildup_slider.setValue(int(self.ab_graphite_buildup * 10))
+        
         # Update pen status label and preview
         print(f"DEBUG _update_ui_from_settings: use_custom_pen={self.use_custom_pen}, custom_pen_path='{self.custom_pen_path}'")
         if self.use_custom_pen and self.custom_pen_path:
@@ -2159,6 +2320,17 @@ class ControlPanel(QMainWindow):
             "--zp-transition-width", str(self.zp_transition_slider.value() / 10.0),
             "--zp-stroke-density", str(self.zp_stroke_density_slider.value() / 10.0),
             "--zp-enable-portrait", str(self.zp_portrait_toggle.isChecked())
+        ])
+        
+        # Adaptive Brush Engine settings (Engine 3E)
+        cmd.extend([
+            "--ab-tip-shape", self._get_ab_tip_shape_value(self.ab_tip_shape_combo.currentText()),
+            "--ab-pencil-hardness", str(self.ab_hardness_slider.value() / 10.0),
+            "--ab-pencil-sharpness", str(self.ab_sharpness_slider.value() / 10.0),
+            "--ab-paper-type", self._get_ab_paper_type_value(self.ab_paper_type_combo.currentText()),
+            "--ab-paper-texture-strength", str(self.ab_texture_strength_slider.value() / 10.0),
+            "--ab-pressure-variation", str(self.ab_pressure_variation_slider.value() / 10.0),
+            "--ab-graphite-buildup", str(self.ab_graphite_buildup_slider.value() / 10.0)
         ])
         
         # Launch in thread

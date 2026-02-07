@@ -70,6 +70,14 @@ except ImportError as e:
     HAS_ZONE_PROGRESSIVE = False
     print(f"Zone Progressive Engine not available: {e}")
 
+# Import Engine 3E - Adaptive Brush Simulation
+try:
+    from engines.adaptive_brush import AdaptiveBrushEngine
+    HAS_ADAPTIVE_BRUSH = True
+except ImportError as e:
+    HAS_ADAPTIVE_BRUSH = False
+    print(f"Adaptive Brush Engine not available: {e}")
+
 # GPU acceleration - try to import CuPy for CUDA support
 HAS_GPU = False
 GPU_INFO = "No GPU acceleration"
@@ -187,11 +195,12 @@ class ColoringBookDrawerSimulation(BaseSimulation):
     Main simulation using pixel-reveal approach.
     Progressively reveals the original image pixels for perfect reproduction.
     
-    ENHANCED: Now supports four rendering engines:
+    ENHANCED: Now supports five rendering engines:
     - PixelRevealEngine (Engine 1): For simple line drawings (fast, skeleton-based)
     - PencilShadingEngine (Engine 2): For complex shaded artwork with textures/shadows
     - AdvancedGradientEngine (Engine 3): For high-contrast pencil art with rich gradients
     - ZoneProgressiveEngine (Engine 3D): Focal-point-first dramatic reveal animation
+    - AdaptiveBrushEngine (Engine 3E): Physics-based pencil simulation
     
     The engine is auto-selected based on image complexity analysis,
     or can be manually selected via the control panel.
@@ -218,7 +227,11 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                  zp_num_zones=10, zp_saliency_threshold=0.3,
                  zp_max_focal_points=5, zp_animation_mode="multi_focal",
                  zp_transition_width=0.1, zp_stroke_density=0.8,
-                 zp_enable_portrait=True):
+                 zp_enable_portrait=True,
+                 ab_tip_shape="round", ab_pencil_hardness=0.5,
+                 ab_pencil_sharpness=0.7, ab_paper_type="cold_press",
+                 ab_paper_texture_strength=0.5, ab_pressure_variation=0.5,
+                 ab_graphite_buildup=0.7):
         # FPS is now LOCKED at 60 for all simulations
         super().__init__(width, height, fps=60, title="Coloring Book Drawer")
         
@@ -242,8 +255,9 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.using_shading_engine = False  # Will be set during setup
         self.using_advanced_gradient = False  # Will be set during setup
         self.using_zone_progressive = False  # Will be set during setup
+        self.using_adaptive_brush = False  # Will be set during setup
         
-        # Engine type: "auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive"
+        # Engine type: "auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive", "adaptive_brush"
         self.engine_type = engine_type
         
         # Advanced Gradient Engine (Engine 3) settings
@@ -264,6 +278,15 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         self.zp_transition_width = zp_transition_width
         self.zp_stroke_density = zp_stroke_density
         self.zp_enable_portrait = zp_enable_portrait
+        
+        # Adaptive Brush Engine (Engine 3E) settings
+        self.ab_tip_shape = ab_tip_shape
+        self.ab_pencil_hardness = ab_pencil_hardness
+        self.ab_pencil_sharpness = ab_pencil_sharpness
+        self.ab_paper_type = ab_paper_type
+        self.ab_paper_texture_strength = ab_paper_texture_strength
+        self.ab_pressure_variation = ab_pressure_variation
+        self.ab_graphite_buildup = ab_graphite_buildup
         
         # Pixel reveal engine (one of two engines will be used)
         self.reveal_engine = None
@@ -339,6 +362,8 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                     engine_choice = "advanced_gradient"
                 elif self.engine_type == "zone_progressive":
                     engine_choice = "zone_progressive"
+                elif self.engine_type == "adaptive_brush":
+                    engine_choice = "adaptive_brush"
                 else:
                     engine_choice = self._analyze_and_select_engine()
                 
@@ -398,6 +423,35 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                         # Process with loading screen (saliency + zone computation)
                         self._process_with_loading_screen()
                 
+                if engine_choice == "adaptive_brush":
+                    if not HAS_ADAPTIVE_BRUSH:
+                        print("\n⚠️  Adaptive Brush Engine not available, falling back to Pencil Shading")
+                        engine_choice = "shading"
+                    else:
+                        print("\n🖊️ Using ADAPTIVE BRUSH ENGINE (Engine 3E)")
+                        self.using_adaptive_brush = True
+                        self.using_zone_progressive = False
+                        self.using_advanced_gradient = False
+                        self.using_shading_engine = False
+                        
+                        self.reveal_engine = AdaptiveBrushEngine(
+                            self.image_path,
+                            self.width,
+                            self.height,
+                            padding=40,
+                            use_gpu=self.use_gpu,
+                            tip_shape=self.ab_tip_shape,
+                            pencil_hardness=self.ab_pencil_hardness,
+                            pencil_sharpness=self.ab_pencil_sharpness,
+                            paper_type=self.ab_paper_type,
+                            paper_texture_strength=self.ab_paper_texture_strength,
+                            pressure_variation=self.ab_pressure_variation,
+                            graphite_buildup=self.ab_graphite_buildup,
+                        )
+                        
+                        # Process with loading screen (stroke extraction + physics)
+                        self._process_with_loading_screen()
+                
                 if engine_choice == "shading":
                     print("\n🎨 Using PENCIL SHADING ENGINE (for complex artwork)")
                     self.using_shading_engine = True
@@ -435,7 +489,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
                     self.reveal_engine.process_image()
                 
                 # Adjust brush scale based on thickness setting (for PixelRevealEngine)
-                if not self.using_shading_engine and not self.using_advanced_gradient and not self.using_zone_progressive:
+                if not self.using_shading_engine and not self.using_advanced_gradient and not self.using_zone_progressive and not self.using_adaptive_brush:
                     self.reveal_engine.brush_scale = 1.1 + (self.thickness_scale * 0.3)
                 
                 # Auto-calculate speed if target_duration is set
@@ -650,7 +704,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
             return
         
         # Calculate points to reveal this frame based on speed
-        if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive:
+        if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive or self.using_adaptive_brush:
             # Phase/zone-based engines provide their own base speed
             base_points = self.reveal_engine.get_points_per_update()
             points_per_frame = int(base_points * self.speed)
@@ -667,7 +721,7 @@ class ColoringBookDrawerSimulation(BaseSimulation):
         
         # Update pen position (for visual feedback)
         if has_more and self.show_pen:
-            if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive:
+            if self.using_shading_engine or self.using_advanced_gradient or self.using_zone_progressive or self.using_adaptive_brush:
                 # These engines provide pen position directly
                 self.pen_pos = self.reveal_engine.get_current_pen_position()
                 self.pen_visible = True
@@ -750,7 +804,7 @@ def main():
     
     # Engine selection
     parser.add_argument("--engine-type", type=str, default="auto",
-                        choices=["auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive"],
+                        choices=["auto", "pixel_reveal", "pencil_shading", "advanced_gradient", "zone_progressive", "adaptive_brush"],
                         help="Rendering engine to use (auto = auto-detect)")
     
     # Advanced Gradient Engine (Engine 3) options
@@ -787,6 +841,24 @@ def main():
                         help="Engine 3D: Stroke density within zones (0.0-1.0)")
     parser.add_argument("--zp-enable-portrait", type=str, default="True",
                         help="Engine 3D: Enable portrait face/eye detection (True/False)")
+    
+    # Adaptive Brush Engine (Engine 3E) options
+    parser.add_argument("--ab-tip-shape", type=str, default="round",
+                        choices=["round", "chisel", "blunt"],
+                        help="Engine 3E: Pencil tip shape")
+    parser.add_argument("--ab-pencil-hardness", type=float, default=0.5,
+                        help="Engine 3E: Pencil hardness 0=soft(6B), 1=hard(4H)")
+    parser.add_argument("--ab-pencil-sharpness", type=float, default=0.7,
+                        help="Engine 3E: Pencil sharpness (0.0-1.0)")
+    parser.add_argument("--ab-paper-type", type=str, default="cold_press",
+                        choices=["smooth", "cold_press", "rough"],
+                        help="Engine 3E: Paper texture type")
+    parser.add_argument("--ab-paper-texture-strength", type=float, default=0.5,
+                        help="Engine 3E: Paper texture effect strength (0.0-1.0)")
+    parser.add_argument("--ab-pressure-variation", type=float, default=0.5,
+                        help="Engine 3E: Pressure variation amount (0.0-1.0)")
+    parser.add_argument("--ab-graphite-buildup", type=float, default=0.7,
+                        help="Engine 3E: Graphite saturation buildup speed (0.0-1.0)")
     
     args = parser.parse_args()
     
@@ -851,6 +923,14 @@ def main():
         zp_transition_width=args.zp_transition_width,
         zp_stroke_density=args.zp_stroke_density,
         zp_enable_portrait=str(args.zp_enable_portrait).lower() == "true",
+        # Adaptive Brush Engine (Engine 3E) options
+        ab_tip_shape=args.ab_tip_shape,
+        ab_pencil_hardness=args.ab_pencil_hardness,
+        ab_pencil_sharpness=args.ab_pencil_sharpness,
+        ab_paper_type=args.ab_paper_type,
+        ab_paper_texture_strength=args.ab_paper_texture_strength,
+        ab_pressure_variation=args.ab_pressure_variation,
+        ab_graphite_buildup=args.ab_graphite_buildup,
     )
     
     sim.run()
