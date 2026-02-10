@@ -115,8 +115,10 @@ class VideoMerger:
         """
         Merge video with background music and optional logo overlay.
         
-        The music will be cropped from the END to match the video length.
-        This means we use the ending portion of the music track.
+        Audio handling:
+        - Music always starts from the beginning.
+        - If music is LONGER than video → trim the excess from the END.
+        - If music is SHORTER than video → loop the music and trim the excess from the END.
         
         Args:
             video_path: Path to the video file
@@ -171,20 +173,20 @@ class VideoMerger:
         try:
             ffmpeg = self.get_ffmpeg_path()
             
-            # Build audio filter for cropping from end and optional fading
-            # We want the LAST video_duration seconds of the music
+            # ── Audio handling ──────────────────────────────────────
+            # Rule 1: Music ALWAYS starts from the beginning (no offset).
+            # Rule 2: If music is LONGER than video  → trim from the END.
+            # Rule 3: If music is SHORTER than video → loop it, then trim the extra from the END.
             audio_filters = []
-            
-            # Crop from end: use atrim to get last N seconds
-            # This uses a negative start time relative to the end
-            # We'll use a different approach: get music duration and calculate offset
             music_duration = self._get_audio_duration(music_path)
             
-            if music_duration > video_duration:
-                # Crop from the end: start = music_duration - video_duration
-                start_offset = music_duration - video_duration
-                audio_filters.append(f"atrim=start={start_offset}")
-                audio_filters.append("asetpts=PTS-STARTPTS")  # Reset timestamps
+            # We need to loop when the music is shorter than the video
+            need_loop = music_duration > 0 and music_duration < video_duration
+            
+            # Always trim audio to exactly the video duration
+            # atrim=end=<seconds> keeps only the first <seconds> of the audio
+            audio_filters.append(f"atrim=start=0:end={video_duration:.3f}")
+            audio_filters.append("asetpts=PTS-STARTPTS")  # Reset timestamps
             
             # Add fade effects
             if fade_audio:
@@ -240,6 +242,10 @@ class VideoMerger:
             if has_logo:
                 cmd.extend(['-i', str(logo_path)])  # Input logo (1)
             
+            # Add music input — loop infinitely if music is shorter than video
+            # -stream_loop -1 MUST come BEFORE the -i for the audio file
+            if need_loop:
+                cmd.extend(['-stream_loop', '-1'])
             cmd.extend(['-i', str(music_path)])  # Input audio (1 or 2)
             
             # Map streams based on whether we have a logo
@@ -274,9 +280,13 @@ class VideoMerger:
             ])
             
             # Log the command for debugging
+            print(f"[VideoMerger] Video duration: {video_duration:.2f}s")
+            print(f"[VideoMerger] Music duration: {music_duration:.2f}s")
+            print(f"[VideoMerger] Music looped: {need_loop}")
             print(f"[VideoMerger] Logo path: {logo_path}")
             print(f"[VideoMerger] Has logo: {has_logo}")
             print(f"[VideoMerger] Video filter: {video_filter_str}")
+            print(f"[VideoMerger] Audio filter: {audio_filter_str}")
             print(f"[VideoMerger] FFmpeg command: {' '.join(cmd)}")
             
             # Add -progress and -nostats for machine-readable progress on stdout
