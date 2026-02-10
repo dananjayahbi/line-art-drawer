@@ -1057,6 +1057,8 @@ class VideoEditorPanel(QMainWindow):
         self.video_player = VideoPlayerWidget()
         self.video_player.logo_position_changed.connect(self._on_logo_position_changed)
         self.video_player.logo_scale_changed.connect(self._on_logo_scale_changed)
+        # Stop music preview when video player starts (they share pygame.mixer.music)
+        self.video_player.playback_started.connect(self._stop_music)
         group_layout.addWidget(self.video_player, stretch=1)
         
         # Video info
@@ -1312,6 +1314,10 @@ class VideoEditorPanel(QMainWindow):
     
     def _on_music_play(self, music_info: MusicInfo):
         """Handle music play button click — inline player per song row."""
+        # Pause video player if playing (they share pygame.mixer.music)
+        if self.video_player.is_playing:
+            self.video_player.pause()
+        
         current = self.music_manager.get_current_playing()
         
         # If same music is playing, toggle stop

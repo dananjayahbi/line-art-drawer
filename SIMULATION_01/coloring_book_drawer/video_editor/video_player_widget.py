@@ -368,6 +368,7 @@ class VideoPlayerWidget(QWidget):
         if PYGAME_AVAILABLE:
             try:
                 pygame.mixer.music.stop()
+                pygame.mixer.music.unload()  # Release file handle so temp file can be deleted/overwritten
             except:
                 pass
         
@@ -486,6 +487,7 @@ class VideoPlayerWidget(QWidget):
                 
                 # Load and play audio from current position
                 pygame.mixer.music.load(str(self.audio_path))
+                pygame.mixer.music.set_volume(1.0)  # Ensure full volume (shared singleton)
                 pygame.mixer.music.play(start=current_time)
                 self._audio_start_frame = self.current_frame
             except Exception as e:
@@ -524,10 +526,11 @@ class VideoPlayerWidget(QWidget):
         self.play_btn.setIcon(load_icon("play"))
         self.playback_timer.stop()
         
-        # Stop audio
+        # Stop audio and release file handle
         if self.has_audio and PYGAME_AVAILABLE:
             try:
                 pygame.mixer.music.stop()
+                pygame.mixer.music.unload()
             except:
                 pass
         
