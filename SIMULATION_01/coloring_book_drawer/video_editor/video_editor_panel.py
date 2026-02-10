@@ -32,6 +32,13 @@ from .video_player_widget import VideoPlayerWidget
 from .video_merger import VideoMerger, MergeResult
 from .logo_manager import LogoManager, LogoInfo
 
+# Import VideoProgressDialog from parent package
+import sys
+_parent_dir = str(Path(__file__).resolve().parent.parent)
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
+from custom_widgets import VideoProgressDialog
+
 
 # Get paths
 SIMULATION_DIR = Path(__file__).resolve().parent.parent
@@ -1592,9 +1599,14 @@ class VideoEditorPanel(QMainWindow):
         if msg_box.exec() != QMessageBox.Yes:
             return
         
-        # Show progress
+        # Show progress dialog
         self.merge_btn.setEnabled(False)
         self.merge_btn.setText("  Merging...")
+        
+        self.merge_progress_dialog = VideoProgressDialog(
+            title="Video Merge", parent=self
+        )
+        self.merge_progress_dialog.start("Merging video with music...")
         
         # Get logo settings if enabled
         logo_path = None
@@ -1637,6 +1649,10 @@ class VideoEditorPanel(QMainWindow):
         self.merge_worker.finished.connect(self.merge_worker.deleteLater)
         self.merge_thread.finished.connect(self.merge_thread.deleteLater)
         
+        # Connect progress to dialog
+        self.merge_worker.progress.connect(self._on_merge_progress)
+        self.merge_progress_dialog.cancelled.connect(self._on_merge_cancel)
+        
         # Start
         self.merge_thread.start()
     
@@ -1645,6 +1661,13 @@ class VideoEditorPanel(QMainWindow):
         self.merge_btn.setEnabled(True)
         self.merge_btn.setText("  Merge Video with Music")
         self.merge_btn.setIcon(load_icon("merge"))
+        
+        # Close progress dialog
+        if hasattr(self, 'merge_progress_dialog') and self.merge_progress_dialog:
+            if result.success:
+                self.merge_progress_dialog.finish_success("Video Merged!")
+            else:
+                self.merge_progress_dialog.finish_error("Merge Failed")
         
         # Common message box style with black text
         msg_style = """
@@ -1690,6 +1713,22 @@ class VideoEditorPanel(QMainWindow):
             msg_box.setIcon(QMessageBox.Critical)
             msg_box.setStyleSheet(msg_style)
             msg_box.exec()
+    
+    def _on_merge_progress(self, progress_value: float):
+        """Handle merge progress updates from worker (0.0 to 1.0)."""
+        if hasattr(self, 'merge_progress_dialog') and self.merge_progress_dialog:
+            pct = int(progress_value * 100)
+            self.merge_progress_dialog.update_progress(pct)
+            if progress_value < 1.0:
+                self.merge_progress_dialog.update_status(f"Encoding... {pct}%")
+            else:
+                self.merge_progress_dialog.update_status("Finalizing...")
+    
+    def _on_merge_cancel(self):
+        """Handle merge cancel request."""
+        if hasattr(self, 'merge_worker') and self.merge_worker:
+            if hasattr(self.merge_worker, 'merger') and self.merge_worker.merger:
+                self.merge_worker.merger.cancel()
     
     def closeEvent(self, event):
         """Clean up on window close."""

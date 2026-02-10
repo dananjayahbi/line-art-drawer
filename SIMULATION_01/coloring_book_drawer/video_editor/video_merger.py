@@ -279,17 +279,61 @@ class VideoMerger:
             print(f"[VideoMerger] Video filter: {video_filter_str}")
             print(f"[VideoMerger] FFmpeg command: {' '.join(cmd)}")
             
+            # Add -progress and -nostats for machine-readable progress on stdout
+            cmd.insert(-1, '-progress')
+            cmd.insert(-1, 'pipe:1')
+            cmd.insert(-1, '-nostats')
+            
             # Run FFmpeg
             self._cancel_requested = False
             self._current_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                text=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             
-            # Wait for completion
-            stdout, stderr = self._current_process.communicate()
+            # Drain stderr in a background thread to prevent pipe deadlock.
+            # FFmpeg writes encoding info to stderr; if the pipe buffer fills
+            # up (~64KB), FFmpeg blocks and our stdout reading stalls.
+            stderr_lines = []
+            stderr_drain = threading.Thread(
+                target=self._drain_stderr,
+                args=(self._current_process.stderr, stderr_lines),
+                daemon=True
+            )
+            stderr_drain.start()
+            
+            # Parse progress output from FFmpeg in real-time
+            last_progress = 0.0
+            
+            if self._current_process.stdout:
+                for line in self._current_process.stdout:
+                    if self._cancel_requested:
+                        break
+                    
+                    line = line.strip()
+                    
+                    # Parse out_time_ms for progress
+                    if line.startswith('out_time_ms='):
+                        try:
+                            time_ms = int(line.split('=')[1].strip())
+                            if time_ms > 0 and video_duration > 0:
+                                pct = min(0.99, time_ms / 1_000_000 / video_duration)
+                                if pct > last_progress and progress_callback:
+                                    last_progress = pct
+                                    progress_callback(pct)
+                        except (ValueError, IndexError):
+                            pass
+                    
+                    elif line.startswith('progress=end'):
+                        if progress_callback:
+                            progress_callback(1.0)
+            
+            # Wait for process and stderr thread to finish
+            self._current_process.wait()
+            stderr_drain.join(timeout=5)
             
             if self._cancel_requested:
                 # Clean up partial file
@@ -298,11 +342,15 @@ class VideoMerger:
                 return MergeResult(False, None, "Merge cancelled")
             
             if self._current_process.returncode != 0:
-                error_msg = stderr.decode('utf-8', errors='ignore')
-                return MergeResult(False, None, f"FFmpeg error: {error_msg[:500]}")
+                error_text = ''.join(stderr_lines)
+                error_msg = error_text[:500] if error_text else "Unknown error"
+                return MergeResult(False, None, f"FFmpeg error: {error_msg}")
             
             if not output_path.exists():
                 return MergeResult(False, None, "Output file was not created")
+            
+            if progress_callback:
+                progress_callback(1.0)
             
             elapsed = time.time() - start_time
             return MergeResult(True, output_path, duration=elapsed)
@@ -372,6 +420,15 @@ class VideoMerger:
                 self._current_process.terminate()
             except:
                 pass
+    
+    @staticmethod
+    def _drain_stderr(pipe, collected):
+        """Drain stderr in a background thread to prevent pipe deadlock."""
+        try:
+            for line in pipe:
+                collected.append(line)
+        except Exception:
+            pass
     
     def merge_async(
         self,

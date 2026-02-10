@@ -457,3 +457,226 @@ class PenTipConfigDialog(QDialog):
     def get_tip_position(self):
         """Return the selected tip position."""
         return self.tip_x, self.tip_y
+
+
+class VideoProgressDialog(QDialog):
+    """
+    Progress dialog for video generation and merge operations.
+    
+    Shows a progress bar, status text, elapsed time, and a cancel button.
+    Styled to match the application's dark theme.
+    """
+    
+    cancelled = Signal()
+    
+    def __init__(self, title="Video Generation", parent=None):
+        """
+        Initialize the progress dialog.
+        
+        Args:
+            title: Window title
+            parent: Parent widget
+        """
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setFixedSize(480, 220)
+        self.setModal(True)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog 
+            | Qt.WindowType.CustomizeWindowHint 
+            | Qt.WindowType.WindowTitleHint
+        )
+        
+        self._start_time = None
+        self._timer = None
+        self._is_cancelled = False
+        
+        self._setup_ui()
+        self._apply_style()
+    
+    def _setup_ui(self):
+        """Build the dialog UI."""
+        from PySide6.QtWidgets import QProgressBar
+        from PySide6.QtCore import QTimer
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(24, 20, 24, 20)
+        
+        # Title / operation label
+        self.title_label = QLabel("Preparing...")
+        self.title_label.setObjectName("progressTitle")
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.title_label)
+        
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p%")
+        self.progress_bar.setFixedHeight(28)
+        layout.addWidget(self.progress_bar)
+        
+        # Status text
+        self.status_label = QLabel("Initializing...")
+        self.status_label.setObjectName("progressStatus")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.status_label)
+        
+        # Elapsed time
+        self.time_label = QLabel("Elapsed: 0s")
+        self.time_label.setObjectName("progressTime")
+        self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.time_label)
+        
+        layout.addStretch()
+        
+        # Cancel button
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setFixedWidth(120)
+        self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cancel_btn.clicked.connect(self._on_cancel)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.cancel_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+        
+        # Timer for elapsed time updates
+        self._timer = QTimer(self)
+        self._timer.setInterval(500)
+        self._timer.timeout.connect(self._update_elapsed)
+    
+    def _apply_style(self):
+        """Apply dark-themed styling."""
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #2b2b2b;
+                border: 1px solid #555;
+                border-radius: 8px;
+            }
+            QLabel#progressTitle {
+                color: #e0e0e0;
+                font-size: 15px;
+                font-weight: bold;
+            }
+            QLabel#progressStatus {
+                color: #aaaaaa;
+                font-size: 12px;
+            }
+            QLabel#progressTime {
+                color: #888888;
+                font-size: 11px;
+            }
+            QProgressBar {
+                border: 1px solid #555;
+                border-radius: 6px;
+                background-color: #3a3a3a;
+                text-align: center;
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QProgressBar::chunk {
+                background-color: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 0,
+                    stop: 0 #4a9a4a, stop: 1 #6abf6a
+                );
+                border-radius: 5px;
+            }
+            QPushButton {
+                background-color: #c0392b;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e74c3c;
+            }
+            QPushButton:pressed {
+                background-color: #a93226;
+            }
+            QPushButton:disabled {
+                background-color: #555555;
+                color: #888888;
+            }
+        """)
+    
+    def start(self, title_text="Generating video..."):
+        """Start the progress dialog with timer."""
+        import time
+        self._start_time = time.time()
+        self._is_cancelled = False
+        self.title_label.setText(title_text)
+        self.status_label.setText("Starting...")
+        self.progress_bar.setValue(0)
+        self.time_label.setText("Elapsed: 0s")
+        self.cancel_btn.setEnabled(True)
+        self.cancel_btn.setText("Cancel")
+        self._timer.start()
+        self.show()
+    
+    def update_progress(self, value: int):
+        """Update the progress bar value (0-100)."""
+        self.progress_bar.setValue(min(100, max(0, value)))
+    
+    def update_status(self, text: str):
+        """Update the status text."""
+        self.status_label.setText(text)
+    
+    def _update_elapsed(self):
+        """Update the elapsed time label."""
+        import time
+        if self._start_time:
+            elapsed = time.time() - self._start_time
+            if elapsed < 60:
+                self.time_label.setText(f"Elapsed: {elapsed:.0f}s")
+            else:
+                mins = int(elapsed // 60)
+                secs = int(elapsed % 60)
+                self.time_label.setText(f"Elapsed: {mins}m {secs}s")
+    
+    def _on_cancel(self):
+        """Handle cancel button click."""
+        self._is_cancelled = True
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setText("Cancelling...")
+        self.status_label.setText("Cancelling operation...")
+        self.cancelled.emit()
+    
+    def finish_success(self, message="Complete!"):
+        """Show completion state and close after a brief delay."""
+        from PySide6.QtCore import QTimer
+        self._timer.stop()
+        self.progress_bar.setValue(100)
+        self.title_label.setText("✅ " + message)
+        self.status_label.setText("Done!")
+        self._update_elapsed()
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setText("Done")
+        # Auto-close after 1.5 seconds
+        QTimer.singleShot(1500, self.accept)
+    
+    def finish_error(self, message="Operation failed"):
+        """Show error state."""
+        self._timer.stop()
+        self.title_label.setText("❌ " + message)
+        self.status_label.setText("See error details.")
+        self._update_elapsed()
+        self.cancel_btn.setText("Close")
+        self.cancel_btn.setEnabled(True)
+        self.cancel_btn.clicked.disconnect()
+        self.cancel_btn.clicked.connect(self.reject)
+    
+    def closeEvent(self, event):
+        """Handle dialog close — emit cancel if still running."""
+        if self._timer and self._timer.isActive():
+            self._on_cancel()
+            event.ignore()
+        else:
+            super().closeEvent(event)

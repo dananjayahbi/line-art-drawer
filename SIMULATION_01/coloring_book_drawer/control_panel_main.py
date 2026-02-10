@@ -25,7 +25,7 @@ from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QIcon, QFont, QP
 
 # Import modularized components
 from settings_manager import SettingsManager
-from custom_widgets import ToggleSwitch, ImageUploadWidget, PenTipConfigDialog, load_icon
+from custom_widgets import ToggleSwitch, ImageUploadWidget, PenTipConfigDialog, VideoProgressDialog, load_icon
 from video_thread import VideoGenerationThread
 from video_editor.video_editor_panel import VideoEditorPanel
 
@@ -2333,22 +2333,35 @@ class ControlPanel(QMainWindow):
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         output_path = output_dir / f"output_{timestamp}_60fps.mp4"
         
+        # Create and show progress dialog
+        self.video_progress_dialog = VideoProgressDialog(
+            title="Video Generation", parent=self
+        )
+        self.video_progress_dialog.start("Generating 60 FPS video...")
+        
         # Start video generation thread
         self.video_thread = VideoGenerationThread(
             FRAMES_FOLDER,
             output_path,
-            sim_fps,  # Input framerate (how frames were captured)
+            sim_fps,
             quality_crf,
-            output_fps=60  # Output framerate (always 60 for smoothness)
+            output_fps=60
         )
         self.video_thread.finished.connect(self._on_video_finished)
         self.video_thread.error.connect(self._on_video_error)
+        self.video_thread.progress.connect(self.video_progress_dialog.update_progress)
+        self.video_thread.status.connect(self.video_progress_dialog.update_status)
+        self.video_progress_dialog.cancelled.connect(self.video_thread.cancel)
         self.video_thread.start()
         
         self._update_status("Generating 60 FPS video...")
     
     def _on_video_finished(self, output_path):
         """Handle video generation completion."""
+        # Close progress dialog with success
+        if hasattr(self, 'video_progress_dialog') and self.video_progress_dialog:
+            self.video_progress_dialog.finish_success("Video Generated!")
+        
         self._update_status(f"Video saved: {Path(output_path).name}")
         QMessageBox.information(
             self,
@@ -2358,6 +2371,10 @@ class ControlPanel(QMainWindow):
     
     def _on_video_error(self, error_msg):
         """Handle video generation error."""
+        # Close progress dialog with error
+        if hasattr(self, 'video_progress_dialog') and self.video_progress_dialog:
+            self.video_progress_dialog.finish_error("Video Generation Failed")
+        
         self._update_status("Video generation failed")
         QMessageBox.critical(self, "Video Generation Error", error_msg)
     
