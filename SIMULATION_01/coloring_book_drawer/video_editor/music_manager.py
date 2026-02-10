@@ -63,6 +63,7 @@ class MusicManager:
         self.music_dir = Path(music_dir)
         self._music_cache: Dict[str, MusicInfo] = {}
         self._current_playing: Optional[Path] = None
+        self._seek_offset: float = 0.0  # Tracks seek position for accurate get_position()
         
         # Ensure pygame mixer is initialized
         ensure_mixer_init()
@@ -210,13 +211,14 @@ class MusicManager:
             return False
         
         try:
-            # Stop current playback
+            # Stop and unload current playback
             self.stop()
             
             # Load and play
             pygame.mixer.music.load(str(music_path))
             pygame.mixer.music.play()
             self._current_playing = music_path
+            self._seek_offset = 0.0  # Track seek offset for position calculation
             return True
             
         except Exception as e:
@@ -224,11 +226,13 @@ class MusicManager:
             return False
     
     def stop(self):
-        """Stop current playback."""
+        """Stop current playback and release the file handle."""
         if PYGAME_AVAILABLE:
             try:
                 pygame.mixer.music.stop()
+                pygame.mixer.music.unload()  # Release file handle
                 self._current_playing = None
+                self._seek_offset = 0.0
             except:
                 pass
     
@@ -259,44 +263,41 @@ class MusicManager:
         return self._current_playing
     
     def get_position(self) -> float:
-        """Get current playback position in seconds."""
+        """Get current playback position in seconds (seek-aware)."""
         if PYGAME_AVAILABLE:
             try:
-                # pygame.mixer.music.get_pos() returns time in milliseconds
+                # get_pos() returns ms since play() was called — does NOT account for seeks
+                # We add _seek_offset to get the real position in the song
                 pos_ms = pygame.mixer.music.get_pos()
                 if pos_ms >= 0:
-                    return pos_ms / 1000.0
+                    return self._seek_offset + (pos_ms / 1000.0)
             except:
                 pass
         return 0.0
     
     def set_position(self, position: float) -> bool:
         """
-        Set playback position in seconds.
+        Seek to a position in the song by reloading and playing from that point.
         
-        Note: This only works reliably for MP3 files.
-        For other formats, playback will restart from the beginning.
+        Uses the reliable reload+play(start=) approach which works for MP3/OGG/WAV.
+        Tracks the seek offset so get_position() returns accurate values.
         
         Args:
-            position: Position in seconds from start
+            position: Position in seconds from start of the song
             
         Returns:
             True if successful
         """
         if PYGAME_AVAILABLE and self._current_playing:
             try:
-                # pygame.mixer.music.set_pos() sets position in seconds for MP3
-                pygame.mixer.music.set_pos(position)
+                # Reload and play from the target position — most reliable approach
+                pygame.mixer.music.load(str(self._current_playing))
+                pygame.mixer.music.play(start=position)
+                # Store the offset so get_position() = offset + get_pos()/1000
+                self._seek_offset = position
                 return True
             except Exception as e:
                 print(f"Error seeking music: {e}")
-                # Fallback: reload and play from position
-                try:
-                    pygame.mixer.music.load(str(self._current_playing))
-                    pygame.mixer.music.play(start=position)
-                    return True
-                except:
-                    pass
         return False
     
     def set_volume(self, volume: float):

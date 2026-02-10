@@ -226,10 +226,12 @@ class VideoThumbnailWidget(QFrame):
 
 
 class MusicListItem(QWidget):
-    """Widget for a music item in the list with play button."""
+    """Widget for a music item in the list with inline play controls and seek bar."""
     
     play_clicked = Signal(object)  # MusicInfo
     selected = Signal(object)  # MusicInfo
+    delete_clicked = Signal(object)  # MusicInfo
+    seek_requested = Signal(float)  # position in seconds
     
     def __init__(self, music_info: MusicInfo, parent=None):
         super().__init__(parent)
@@ -240,9 +242,13 @@ class MusicListItem(QWidget):
         self._setup_ui()
     
     def _setup_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(10)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(8, 6, 8, 6)
+        main_layout.setSpacing(4)
+        
+        # Top row: play button, music icon, name, duration, delete button
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
         
         # Play button with icon
         self.play_btn = QPushButton()
@@ -261,24 +267,87 @@ class MusicListItem(QWidget):
             }
         """)
         self.play_btn.clicked.connect(lambda: self.play_clicked.emit(self.music_info))
-        layout.addWidget(self.play_btn)
+        top_row.addWidget(self.play_btn)
         
         # Music icon
         music_icon_label = QLabel()
         music_icon_label.setPixmap(load_icon("music").pixmap(16, 16))
-        layout.addWidget(music_icon_label)
+        top_row.addWidget(music_icon_label)
         
         # Name - darker color for better visibility
         self.name_label = QLabel(self.music_info.display_name)
         self.name_label.setStyleSheet("color: #1a1a1a; font-size: 12px; font-weight: 500;")
         self.name_label.setToolTip(self.music_info.filename)
-        layout.addWidget(self.name_label, stretch=1)
+        top_row.addWidget(self.name_label, stretch=1)
         
         # Duration
         duration_str = self._format_duration(self.music_info.duration)
         self.duration_label = QLabel(duration_str)
         self.duration_label.setStyleSheet("color: #505050; font-size: 11px;")
-        layout.addWidget(self.duration_label)
+        top_row.addWidget(self.duration_label)
+        
+        # Delete button
+        self.delete_btn = QPushButton()
+        self.delete_btn.setFixedSize(24, 24)
+        self.delete_btn.setIcon(load_icon("delete"))
+        self.delete_btn.setIconSize(QSize(14, 14))
+        self.delete_btn.setToolTip("Delete this track")
+        self.delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                border-radius: 12px;
+            }
+            QPushButton:hover {
+                background-color: #c85050;
+            }
+        """)
+        self.delete_btn.clicked.connect(lambda: self.delete_clicked.emit(self.music_info))
+        top_row.addWidget(self.delete_btn)
+        
+        main_layout.addLayout(top_row)
+        
+        # Inline seek bar row (hidden by default, shown when playing)
+        self.seek_widget = QWidget()
+        seek_layout = QHBoxLayout(self.seek_widget)
+        seek_layout.setContentsMargins(40, 0, 28, 2)  # Indent to align under name
+        seek_layout.setSpacing(6)
+        
+        self.time_label = QLabel("00:00")
+        self.time_label.setStyleSheet("color: #606060; font-size: 10px; min-width: 35px;")
+        seek_layout.addWidget(self.time_label)
+        
+        self.seek_slider = QSlider(Qt.Horizontal)
+        self.seek_slider.setRange(0, 1000)
+        self.seek_slider.setValue(0)
+        self.seek_slider.setFixedHeight(16)
+        self.seek_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                background: #b0b0b0;
+                height: 3px;
+                border-radius: 1px;
+            }
+            QSlider::handle:horizontal {
+                background: #8fad88;
+                width: 10px;
+                margin: -4px 0;
+                border-radius: 5px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #8fad88;
+                border-radius: 1px;
+            }
+        """)
+        self.seek_slider.sliderReleased.connect(self._on_seek_released)
+        self.seek_slider.sliderMoved.connect(self._on_seek_moved)
+        seek_layout.addWidget(self.seek_slider, stretch=1)
+        
+        self.total_label = QLabel(self._format_duration(self.music_info.duration))
+        self.total_label.setStyleSheet("color: #606060; font-size: 10px; min-width: 35px;")
+        seek_layout.addWidget(self.total_label)
+        
+        self.seek_widget.setVisible(False)
+        main_layout.addWidget(self.seek_widget)
         
         self.setCursor(Qt.PointingHandCursor)
         self._update_style()
@@ -288,12 +357,36 @@ class MusicListItem(QWidget):
         secs = int(seconds % 60)
         return f"{minutes:02d}:{secs:02d}"
     
+    def _on_seek_released(self):
+        """Handle seek slider release — request seek."""
+        if self.music_info and self.music_info.duration > 0:
+            position = (self.seek_slider.value() / 1000) * self.music_info.duration
+            self.seek_requested.emit(position)
+    
+    def _on_seek_moved(self, value: int):
+        """Update time label as user drags."""
+        if self.music_info and self.music_info.duration > 0:
+            position = (value / 1000) * self.music_info.duration
+            self.time_label.setText(self._format_duration(position))
+    
+    def update_seek_position(self, position_seconds: float):
+        """Update the seek bar and time label from outside (timer-driven)."""
+        if not self.seek_slider.isSliderDown() and self.music_info.duration > 0:
+            slider_value = int((position_seconds / self.music_info.duration) * 1000)
+            self.seek_slider.setValue(min(slider_value, 1000))
+            self.time_label.setText(self._format_duration(position_seconds))
+    
+    def reset_seek(self):
+        """Reset seek bar to beginning."""
+        self.seek_slider.setValue(0)
+        self.time_label.setText("00:00")
+    
     def _update_style(self):
         if self.is_selected:
-            bg_color = "#b8d4b0"  # Lighter green for selected
+            bg_color = "#b8d4b0"
             border = "2px solid #8fad88"
         else:
-            bg_color = "#d0d0d0"  # Light gray background for visibility
+            bg_color = "#d0d0d0"
             border = "1px solid #a0a0a0"
         
         self.setStyleSheet(f"""
@@ -310,6 +403,7 @@ class MusicListItem(QWidget):
     
     def set_playing(self, playing: bool):
         self.is_playing = playing
+        self.seek_widget.setVisible(playing)
         if playing:
             self.play_btn.setIcon(load_icon("pause"))
             self.play_btn.setStyleSheet("""
@@ -336,6 +430,7 @@ class MusicListItem(QWidget):
                     background-color: #505050;
                 }
             """)
+            self.reset_seek()
     
     def mousePressEvent(self, event):
         self.selected.emit(self.music_info)
@@ -602,7 +697,7 @@ class VideoEditorPanel(QMainWindow):
         parent_layout.addWidget(group, stretch=1)
     
     def _create_music_section(self, parent_layout):
-        """Create the music list section with seek slider."""
+        """Create the music list section with inline seek bar per track."""
         group = QGroupBox("Background Music")
         group.setStyleSheet("""
             QGroupBox {
@@ -623,125 +718,53 @@ class VideoEditorPanel(QMainWindow):
         group_layout = QVBoxLayout(group)
         group_layout.setContentsMargins(10, 15, 10, 10)
         
-        # Music playback controls with seek slider
-        playback_frame = QFrame()
-        playback_frame.setStyleSheet("""
-            QFrame {
-                background-color: #2d2d2d;
-                border-radius: 6px;
-                padding: 8px;
-            }
-        """)
-        playback_layout = QVBoxLayout(playback_frame)
-        playback_layout.setContentsMargins(10, 8, 10, 8)
-        playback_layout.setSpacing(8)
-        
-        # Now playing label
-        self.now_playing_label = QLabel("No music playing")
-        self.now_playing_label.setStyleSheet("color: #909090; font-size: 11px;")
-        self.now_playing_label.setAlignment(Qt.AlignCenter)
-        playback_layout.addWidget(self.now_playing_label)
-        
-        # Seek slider row
-        seek_row = QHBoxLayout()
-        seek_row.setSpacing(8)
-        
-        self.music_time_label = QLabel("00:00")
-        self.music_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px; min-width: 40px;")
-        seek_row.addWidget(self.music_time_label)
-        
-        self.music_seek_slider = QSlider(Qt.Horizontal)
-        self.music_seek_slider.setRange(0, 1000)
-        self.music_seek_slider.setValue(0)
-        self.music_seek_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                background: #404040;
-                height: 4px;
-                border-radius: 2px;
-            }
-            QSlider::handle:horizontal {
-                background: #8fad88;
-                width: 12px;
-                margin: -4px 0;
-                border-radius: 6px;
-            }
-            QSlider::sub-page:horizontal {
-                background: #8fad88;
-                border-radius: 2px;
-            }
-        """)
-        self.music_seek_slider.sliderPressed.connect(self._on_music_seek_pressed)
-        self.music_seek_slider.sliderReleased.connect(self._on_music_seek_released)
-        self.music_seek_slider.sliderMoved.connect(self._on_music_seek_moved)
-        seek_row.addWidget(self.music_seek_slider, stretch=1)
-        
-        self.music_duration_label = QLabel("00:00")
-        self.music_duration_label.setStyleSheet("color: #b0b0b0; font-size: 11px; min-width: 40px;")
-        seek_row.addWidget(self.music_duration_label)
-        
-        playback_layout.addLayout(seek_row)
-        
-        # Control buttons row
-        controls_row = QHBoxLayout()
-        controls_row.setSpacing(10)
-        controls_row.addStretch()
-        
-        # Stop button
-        self.music_stop_btn = QPushButton()
-        self.music_stop_btn.setIcon(load_icon("stop"))
-        self.music_stop_btn.setIconSize(QSize(16, 16))
-        self.music_stop_btn.setFixedSize(32, 32)
-        self.music_stop_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #404040;
-                border: none;
-                border-radius: 16px;
-            }
-            QPushButton:hover {
-                background-color: #505050;
-            }
-        """)
-        self.music_stop_btn.clicked.connect(self._stop_music)
-        controls_row.addWidget(self.music_stop_btn)
-        
-        # Volume icon
-        vol_label = QLabel()
-        vol_label.setPixmap(load_icon("volume").pixmap(16, 16))
-        controls_row.addWidget(vol_label)
-        
-        self.volume_slider = QSlider(Qt.Horizontal)
-        self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(70)
-        self.volume_slider.setFixedWidth(80)
-        self.volume_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                background: #404040;
-                height: 4px;
-                border-radius: 2px;
-            }
-            QSlider::handle:horizontal {
-                background: #8fad88;
-                width: 12px;
-                margin: -4px 0;
-                border-radius: 6px;
-            }
-        """)
-        self.volume_slider.valueChanged.connect(self._on_volume_changed)
-        controls_row.addWidget(self.volume_slider)
-        
-        controls_row.addStretch()
-        playback_layout.addLayout(controls_row)
-        
-        group_layout.addWidget(playback_frame)
-        
-        # Toolbar
+        # Toolbar with track count, upload, and stop buttons
         toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
         
         self.music_count_label = QLabel("0 tracks")
         self.music_count_label.setStyleSheet("color: #909090; font-size: 11px;")
         toolbar.addWidget(self.music_count_label)
         
         toolbar.addStretch()
+        
+        # Upload music button
+        upload_music_btn = QPushButton()
+        upload_music_btn.setIcon(load_icon("upload"))
+        upload_music_btn.setIconSize(QSize(16, 16))
+        upload_music_btn.setFixedSize(28, 28)
+        upload_music_btn.setToolTip("Upload music files")
+        upload_music_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #404040;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #505050;
+            }
+        """)
+        upload_music_btn.clicked.connect(self._upload_music)
+        toolbar.addWidget(upload_music_btn)
+        
+        # Stop button
+        self.music_stop_btn = QPushButton()
+        self.music_stop_btn.setIcon(load_icon("stop"))
+        self.music_stop_btn.setIconSize(QSize(16, 16))
+        self.music_stop_btn.setFixedSize(28, 28)
+        self.music_stop_btn.setToolTip("Stop playback")
+        self.music_stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #404040;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #505050;
+            }
+        """)
+        self.music_stop_btn.clicked.connect(self._stop_music)
+        toolbar.addWidget(self.music_stop_btn)
         
         group_layout.addLayout(toolbar)
         
@@ -1126,14 +1149,16 @@ class VideoEditorPanel(QMainWindow):
         music_list = self.music_manager.list_music()
         self.music_count_label.setText(f"{len(music_list)} tracks")
         
-        # Set initial volume
-        self.music_manager.set_volume(self.volume_slider.value() / 100.0)
+        # Set volume to max (user preference)
+        self.music_manager.set_volume(1.0)
         
         # Add to list
         for music_info in music_list:
             widget = MusicListItem(music_info)
             widget.play_clicked.connect(self._on_music_play)
             widget.selected.connect(self._on_music_selected)
+            widget.delete_clicked.connect(self._on_music_delete)
+            widget.seek_requested.connect(self._on_music_seek_to)
             
             self.music_layout.addWidget(widget)
             self.music_widgets.append(widget)
@@ -1286,16 +1311,15 @@ class VideoEditorPanel(QMainWindow):
         self._update_merge_button()
     
     def _on_music_play(self, music_info: MusicInfo):
-        """Handle music play button click."""
+        """Handle music play button click — inline player per song row."""
         current = self.music_manager.get_current_playing()
         
-        # If same music is playing, toggle
+        # If same music is playing, toggle stop
         if current == music_info.path and self.music_manager.is_playing():
             self.music_manager.stop()
             self.music_timer.stop()
             for widget in self.music_widgets:
                 widget.set_playing(False)
-            self.now_playing_label.setText("No music playing")
             self.current_playing_music = None
         else:
             # Stop current and play new
@@ -1310,8 +1334,6 @@ class VideoEditorPanel(QMainWindow):
                         widget.set_playing(True)
                         break
                 self.current_playing_music = music_info
-                self.now_playing_label.setText(f"Playing: {music_info.display_name}")
-                self.music_duration_label.setText(self._format_time(music_info.duration))
                 self.music_timer.start(100)  # Update every 100ms
         
         # Also select the music
@@ -1323,50 +1345,140 @@ class VideoEditorPanel(QMainWindow):
         self.music_timer.stop()
         for widget in self.music_widgets:
             widget.set_playing(False)
-        self.now_playing_label.setText("No music playing")
-        self.music_seek_slider.setValue(0)
-        self.music_time_label.setText("00:00")
         self.current_playing_music = None
     
-    def _on_volume_changed(self, value: int):
-        """Handle volume slider change."""
-        self.music_manager.set_volume(value / 100.0)
-    
     def _update_music_progress(self):
-        """Update the music seek slider position."""
+        """Update the inline seek slider on the currently playing track widget."""
         if not self.music_manager.is_playing() or not self.current_playing_music:
             return
         
         # Get current position from pygame
         position = self.music_manager.get_position()
-        duration = self.current_playing_music.duration
         
-        if duration > 0 and not self.music_seek_slider.isSliderDown():
-            # Update slider (0-1000 range)
-            slider_value = int((position / duration) * 1000)
-            self.music_seek_slider.setValue(min(slider_value, 1000))
-            self.music_time_label.setText(self._format_time(position))
+        # Update the seek bar on the playing widget
+        for widget in self.music_widgets:
+            if widget.music_info == self.current_playing_music and widget.is_playing:
+                widget.update_seek_position(position)
+                break
     
-    def _on_music_seek_pressed(self):
-        """Handle seek slider press."""
-        # Pause timer updates while user is dragging
-        pass
-    
-    def _on_music_seek_released(self):
-        """Handle seek slider release."""
+    def _on_music_seek_to(self, position: float):
+        """Handle seek request from inline slider."""
         if self.current_playing_music:
-            # Get target position from slider
-            value = self.music_seek_slider.value()
-            position = (value / 1000) * self.current_playing_music.duration
-            
-            # Seek to position
             self.music_manager.set_position(position)
     
-    def _on_music_seek_moved(self, value: int):
-        """Handle seek slider movement."""
-        if self.current_playing_music:
-            position = (value / 1000) * self.current_playing_music.duration
-            self.music_time_label.setText(self._format_time(position))
+    def _upload_music(self):
+        """Upload music files to the background music library."""
+        import shutil
+        
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Music Files",
+            "",
+            "Audio Files (*.mp3 *.wav *.ogg *.m4a *.flac);;All Files (*)"
+        )
+        
+        if not files:
+            return
+        
+        copied = 0
+        skipped = 0
+        
+        for file_path in files:
+            src = Path(file_path)
+            dest = MUSIC_DIR / src.name
+            
+            if dest.exists():
+                skipped += 1
+                continue
+            
+            try:
+                shutil.copy2(str(src), str(dest))
+                copied += 1
+            except Exception as e:
+                print(f"[Music Upload] Failed to copy {src.name}: {e}")
+        
+        # Show result
+        if copied > 0 or skipped > 0:
+            parts = []
+            if copied > 0:
+                parts.append(f"{copied} file(s) uploaded")
+            if skipped > 0:
+                parts.append(f"{skipped} file(s) already exist")
+            
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Music Upload")
+            msg.setText(", ".join(parts) + ".")
+            msg.setIcon(QMessageBox.Information)
+            msg.setStyleSheet("""
+                QMessageBox { background-color: #f0f0f0; }
+                QMessageBox QLabel { color: #1a1a1a; font-size: 12px; }
+                QPushButton {
+                    background-color: #8fad88; color: white;
+                    padding: 6px 16px; border-radius: 4px; min-width: 60px;
+                }
+                QPushButton:hover { background-color: #7a9773; }
+            """)
+            msg.exec()
+            
+            # Refresh the music list
+            self._load_music()
+    
+    def _on_music_delete(self, music_info: MusicInfo):
+        """Handle delete request for a music track."""
+        # Stop if this track is currently playing
+        if self.current_playing_music and self.current_playing_music.path == music_info.path:
+            self._stop_music()
+        
+        # Confirm
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Delete Music")
+        msg.setText(
+            f"Are you sure you want to delete this track?\n\n"
+            f"{music_info.display_name}\n\n"
+            f"This action cannot be undone."
+        )
+        msg.setIcon(QMessageBox.Warning)
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+        msg.setStyleSheet("""
+            QMessageBox { background-color: #f0f0f0; }
+            QMessageBox QLabel { color: #1a1a1a; font-size: 12px; }
+            QPushButton {
+                background-color: #c85050; color: white;
+                padding: 6px 16px; border-radius: 4px; min-width: 60px;
+            }
+            QPushButton:hover { background-color: #a84040; }
+        """)
+        
+        if msg.exec() != QMessageBox.Yes:
+            return
+        
+        # Delete the file
+        try:
+            if music_info.path.exists():
+                music_info.path.unlink()
+            
+            # If this was the selected music, deselect
+            if self.selected_music and self.selected_music.path == music_info.path:
+                self.selected_music = None
+                self._update_merge_button()
+            
+            # Refresh the music list
+            self._load_music()
+        except Exception as e:
+            error_msg = QMessageBox(self)
+            error_msg.setWindowTitle("Delete Failed")
+            error_msg.setText(f"Failed to delete track:\n\n{str(e)}")
+            error_msg.setIcon(QMessageBox.Critical)
+            error_msg.setStyleSheet("""
+                QMessageBox { background-color: #f0f0f0; }
+                QMessageBox QLabel { color: #1a1a1a; font-size: 12px; }
+                QPushButton {
+                    background-color: #c85050; color: white;
+                    padding: 6px 16px; border-radius: 4px; min-width: 60px;
+                }
+            """)
+            error_msg.exec()
     
     def _format_time(self, seconds: float) -> str:
         """Format seconds as MM:SS."""
