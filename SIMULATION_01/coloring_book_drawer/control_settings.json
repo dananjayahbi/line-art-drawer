@@ -2,7 +2,7 @@
   "width": "800",
   "height": "1000",
   "fps": "60",
-  "target_duration": "30.0",
+  "target_duration": "100.0",
   "thickness": "1.0",
   "use_gpu": true,
   "show_pen": true,
@@ -21,7 +21,7 @@
   "stroke_spacing": "3",
   "edge_phases_first": "1",
   "shading_order": "natural",
-  "engine_type": "pencil_shading",
+  "engine_type": "pencil_shading_v2",
   "contour_sensitivity": "0.5",
   "gradient_smoothness": "0.7",
   "texture_detection_strength": "0.6",
@@ -54,5 +54,6 @@
   "hm_transition_width": "10",
   "hm_blend_smoothness": "0.7",
   "hm_strategy_mode": "auto",
-  "hm_focal_detection": true
+  "hm_focal_detection": true,
+  "ps2_auto_tune": false
 }
